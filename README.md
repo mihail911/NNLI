@@ -1,0 +1,1 @@
+Baseline models for Natural Language Inference on the logical entailment task, evaluated with sNLI. 

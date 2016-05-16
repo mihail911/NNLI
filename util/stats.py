@@ -1,12 +1,24 @@
 import collections
 import cPickle
 import matplotlib
+import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import time
 
-from util.afs_safe_logger import Logger
+# Hack for command line invocations                                                                                                     
+if __name__ == '__main__':
+    import os, sys
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.append(root_dir)
 
+# Use our ouwn logger instead
+try:
+    from util.afs_safe_logger import Logger
+except ImportError as e:
+    import warnings
+    warnings.warn("Could not find logger.  Using base logger instead.")
+    from util.BaseLogger import BaseLogger as Logger
 # Number of seconds in an hour
 SEC_HOUR = 3600
 

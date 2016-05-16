@@ -1,0 +1,4 @@
+#!/bin/bash
+# Cleans temp files
+rm -rf *~ 
+rm -rf *\#*#

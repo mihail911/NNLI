@@ -1,11 +1,19 @@
 #!/usr/bin/env python
 
 import numpy as np
-import sys
+import sys, os
 import theano
 import theano.tensor as T
+from theano.tensor.shared_randomstreams import RandomStreams
+
+# Hack for command line invocations
+if __name__ == '__main__':
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.append(root_dir)
+
 
 sys.path.append("/Users/mihaileric/Documents/Research/Lasagne")
+
 import lasagne
 
 from lasagne.layers import EmbeddingLayer, InputLayer, DenseLayer, ConcatLayer, get_output
@@ -29,15 +37,41 @@ GRAD_CLIP = 100
 EPOCH_SIZE = 100
 # Number of epochs to train the net
 NUM_EPOCHS = 100
-
+DROPOUT = 0.8
 NUM_DENSE_UNITS = 3
+
+# Training / Devving / Testing
+OP_MODES = {'train', 'dev', 'test'}
+MODE = 'train'
 
 
 class SumEmbeddingLayer(lasagne.layers.Layer):
+    """
+    Adding an embedding layer in lasagne is as easy as 
+    subclassing lasagne.layers.Layer.
+    
+    The basic methods to be overridden are
+    :get_output_shape_for:  The shape of the output given the shape of the input layer.
+    :get_output_for: Should provide the composition of Theano / Lasagne functions
+    needed to compute this new layer.
 
-    def __init__(self, incoming):
+    """
+    def __init__(self, incoming, keep_prob=1, mask_time=True, seed=None):
+        """ 
+        Init.  
+        :param keep_prob: The probability of keeping each of the embedding vectors
+        :param mask_time: Boolean indicating whether to mask individual parameters
+        or an entire vector for a time step (analagous to skip-grams)
+        :param seed: The seed for the random number generator, if dropout is used.
+        """
         super(SumEmbeddingLayer, self).__init__(incoming)
-
+        self.keep_prob = keep_prob
+        if keep_prob != 1:
+            self.mask_time = mask_time
+            
+            stream_seed = seed if seed else np.random.randint( (2 << 64))
+            self.srng = RandomStreams(seed=stream_seed)
+        
 
     def get_output_shape_for(self, input_shape):
         """
@@ -51,10 +85,20 @@ class SumEmbeddingLayer(lasagne.layers.Layer):
     def get_output_for(self, input):
         """
         Sum embeddings for given sample across all time steps (seq_length)
+        Dropout is applied to each  if applicable
         :param input:  Expected to be (batch_size, seq_length, embed_dim)
         :return: Summed embeddings of dim (batch_size, embed_dim)
         """
-        return input.sum(axis=1)
+        
+        if MODE is not 'train':
+            out = input.sum(axis=1)
+            return out if self.keep_prob == 1 else (1./self.keep_prob * out)
+                
+        elif self.keep_prob > 0:
+            mask_shape = (input.shape[2],) if self.mask_time else (input.shape[0], input.shape[2])
+            
+            mask = srng.binomial(shape=mask_shape, p=self.keep_prob)
+            return ((1./self.keep_prob) * mask).sum(axis=1)
 
 trainData = "/Users/mihaileric/Documents/Research/LSTM-NLI/data/snli_1.0_train.jsonl"
 trainDataStats = "/Users/mihaileric/Documents/Research/LSTM-NLI/data/train_dataStats.json"
@@ -159,7 +203,8 @@ def main(exp_name, embed_data, train_data, train_data_stats, val_data, val_data_
 
     l_in = l_concat
     l_output = l_concat
-    # Add 'num_dense' dense layers
+    # Add 'num_dense' dense layers with tanh
+    # top layer is softmax
     if num_dense > 1:
         for n in range(num_dense):
             if n == num_dense-1:
