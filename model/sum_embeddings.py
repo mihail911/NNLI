@@ -98,7 +98,7 @@ class SumEmbeddingLayer(lasagne.layers.Layer):
             mask_shape = (input.shape[2],) if self.mask_time else (input.shape[0], input.shape[2])
             
             mask = srng.binomial(shape=mask_shape, p=self.keep_prob)
-            return ((1./self.keep_prob) * mask).sum(axis=1)
+            return ((1./self.keep_prob) * mask * input).sum(axis=1)
 
 trainData = "/Users/mihaileric/Documents/Research/LSTM-NLI/data/snli_1.0_train.jsonl"
 trainDataStats = "/Users/mihaileric/Documents/Research/LSTM-NLI/data/train_dataStats.json"
