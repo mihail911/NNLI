@@ -94,7 +94,7 @@ class SumEmbeddingLayer(lasagne.layers.Layer):
             out = input.sum(axis=1)
             return out if self.keep_prob == 1 else (1./self.keep_prob * out)
                 
-        elif self.keep_prob > 0:
+        elif self.keep_prob < 1: 
             mask_shape = (input.shape[2],) if self.mask_time else (input.shape[0], input.shape[2])
             
             mask = srng.binomial(shape=mask_shape, p=self.keep_prob)
