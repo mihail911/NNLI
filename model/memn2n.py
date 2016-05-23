@@ -24,6 +24,7 @@ from util.utils import sick_reader
 import warnings
 warnings.filterwarnings('ignore', '.*topo.*')
 
+_DEBUG=True
 
 class InnerProductLayer(lasagne.layers.MergeLayer):
 
@@ -158,7 +159,7 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         # inputs
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
         # Error here...
-        l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, embedding_size))
+        l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, 2*embedding_size))
         l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
 
         # generate the temporal encoding of sentence sequences using per-word positional encoding which is l_context_pe_in
@@ -203,6 +204,7 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         self.set_zero = theano.function([zero_vec_tensor], updates=[(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [self.A, self.C]])
 
     def get_output_shape_for(self, input_shapes):
+        # Need the output shape to be (batch_size, 2*hidden_size)
         return lasagne.layers.helper.get_output_shape(self.network)
 
     def get_output_for(self, inputs, **kwargs):
@@ -214,7 +216,7 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
 
 class Model:
 
-    def __init__(self, train_file, test_file, batch_size=32, embedding_size=20, max_norm=40, lr=0.01, num_hops=3, adj_weight_tying=True, linear_start=True, **kwargs):
+    def __init__(self, train_file, test_file, batch_size=32, embedding_size=20, max_norm=40, lr=0.01, num_hops=1, adj_weight_tying=True, linear_start=True, **kwargs):
        
         # TODO: modify / remove these three lines to provide train_lines as list of list of sentences
         # Same for test_lines
@@ -663,15 +665,59 @@ def main():
     model = Model(**args.__dict__)
     model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 
+
+def small_test():
+    ''' 
+    Implements a small test to make sure that the memory network is functional, with synthetic data
+    '''
+    batch_size, max_seqlen, max_sentlen, embedding_size = 32, 20, 10, 25
+    num_classes = 3
+    vocab = [chr(i) for i in range(65, 122)]
+
+    A, C = lasagne.init.Normal(std=0.1).sample((len(vocab)+1, embedding_size)), lasagne.init.Normal(std=0.1)
+    A_T, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+
+    # l_B_embedding = theano.shared(np.zeros((batch_size, 2*embedding_size), dtype=theano.config.floatX))
+    l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
+    # l_context_in = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen), dtype=theano.config.floatX))
+    l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
+    # l_context_pe_in = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen), dtype=theano.config.floatX))
+    l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, 2*embedding_size))
+
+    mnl_1 = MemoryNetworkLayer((l_context_in, l_B_embedding, l_context_pe_in), vocab, embedding_size, 
+                    A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=lasagne.nonlinearities.softmax)
+    
+    # weight tying
+    A, A_T = C, C_T
+    C, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+
+    mnl_2 = MemoryNetworkLayer((l_context_in, mnl_1, l_context_pe_in), vocab, embedding_size, 
+                    A=A, A_T=A_T, C=C, C_T=C_T,
+                    nonlinearity=lasagne.nonlinearities.softmax)
+    A, A_T = C, C_T
+    C, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+
+
+    mem_network = MemoryNetworkLayer((l_context_in, mnl_2, l_context_pe_in), vocab, embedding_size, 
+                    A=A, A_T=A_T, C=C, C_T=C_T,
+                    nonlinearity=lasagne.nonlinearities.softmax)
+    
+    l_pred = lasagne.layers.DenseLayer(mem_network, num_classes, W=lasagne.init.Normal(std=0.1), 
+                                       b=None, nonlinearity=lasagne.nonlinearities.softmax)
+
+    
+    print "evaluating small memory network..."
+    output = lasagne.layers.helper.get_output(l_pred, {
+            l_context_in: np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen)),
+            l_context_pe_in: np.random.randn(batch_size, max_seqlen, max_sentlen, embedding_size),
+            l_B_embedding : np.random.randn(batch_size, 2*embedding_size)
+        }).eval()
+
+    print output
+    print output.shape
+
 if __name__ == '__main__':
-
-    main()
-    # filenames = (root_dir + "/data/SICK/SICK_train_parsed.txt", root_dir + "/data/SICK/SICK_dev_parsed.txt", 
-    #              root_dir + "/data/SICK/SICK_test_parsed.txt")
-    # reader = sick_reader
-    # vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = get_vocab(filenames, reader)
-
-    # train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
-    # test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
-    # lines = np.concatenate([train_lines, test_lines], axis=0)
-    #   
+    if _DEBUG:
+        small_test()
+    else:
+        main()
