@@ -153,9 +153,11 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
             raise NotImplementedError
 
         batch_size, max_seqlen, max_sentlen = self.input_shapes[0]
+        assert(max_seqlen % 2 == 0)
 
         # inputs
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
+        # Error here...
         l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, embedding_size))
         l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
 
@@ -165,13 +167,16 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         #------------
         l_A_embedding = TemporalEncodingLayer(pe_A_encoding, T=A_T)
         self.A_T = l_A_embedding.T
+        l_A_embedding = lasagne.layers.ReshapeLayer(l_A_embedding, shape=(batch_size, int(max_seqlen / 2), 2 * embedding_size))
         
         pe_C_embedding = PositionalEncodingLayer([l_context_in, l_context_pe_in], vocab, C)
         self.C = pe_C_embedding.W
         #------------
         l_C_embedding = TemporalEncodingLayer(pe_C_embedding, T=C_T)
         self.C_T = l_C_embedding.T
-        #print self.A, self.C
+        l_C_embedding = lasagne.layers.ReshapeLayer(l_C_embedding, shape=(batch_size, int(max_seqlen / 2), 2 * embedding_size))
+
+
         # Performs attention to get p_i = softmax (u^T * m_i)
         l_prob = InnerProductLayer((l_A_embedding, l_B_embedding), nonlinearity=nonlinearity)
 
@@ -227,7 +232,6 @@ class Model:
 
         lines = np.concatenate([train_lines, test_lines], axis=0)
         print "concat lines: ", lines.shape
-        quit()
         # ---------------------------------------
         # train_lines, test_lines = self.get_lines(train_file), self.get_lines(test_file)
         # lines = np.concatenate([train_lines, test_lines], axis=0)
@@ -236,8 +240,8 @@ class Model:
 
 
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels, offset=0)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels, offset=len(S_train))
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels)
         S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
 
         print "Processed dataset"
@@ -255,7 +259,6 @@ class Model:
                 print k, self.data[d][k].shape,
             print ''
 
-        quit()
 
         lb = LabelBinarizer()
         lb.fit(list(vocab))
@@ -265,7 +268,7 @@ class Model:
         self.max_seqlen = max_seqlen
         self.max_sentlen = max_sentlen
         self.embedding_size = embedding_size
-        self.num_classes = len(vocab) + 1
+        self.num_classes = 3 #len(vocab) + 1
         self.vocab = vocab
         self.adj_weight_tying = adj_weight_tying
         self.num_hops = num_hops
@@ -278,6 +281,9 @@ class Model:
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
         self.build_network(self.nonlinearity)
+
+        print "Network built"
+
 
     def build_network(self, nonlinearity):
         batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
@@ -295,36 +301,45 @@ class Model:
         q_pe = T.tensor4()
 
         self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
-        self.q_shared = theano.shared(np.zeros((batch_size, ), dtype=np.int32), borrow=True)
+        # represents premise/hypothesis pair hence why axis 1 has value 2
+        self.q_shared = theano.shared(np.zeros((batch_size, 2), dtype=np.int32), borrow=True)
         self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
         self.c_pe_shared = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
-        self.q_pe_shared = theano.shared(np.zeros((batch_size, 1, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
+        self.q_pe_shared = theano.shared(np.zeros((batch_size, 2, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
         
         # the repository of sentences to index into
         S_shared = theano.shared(self.S, borrow=True)
         
         # Actual embeddings of contexts and queries
+        # hard-coded 2 to indicate premise/hypothesis pair
         cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
-        qq = S_shared[q.flatten()].reshape((batch_size, max_sentlen))
+        qq = S_shared[q.flatten()].reshape((batch_size, 2, max_sentlen))
 
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        l_question_in = lasagne.layers.InputLayer(shape=(batch_size, max_sentlen))
+        l_question_in = lasagne.layers.InputLayer(shape=(batch_size, 2, max_sentlen))
 
         l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
-        l_question_pe_in = lasagne.layers.InputLayer(shape=(batch_size, 1, max_sentlen, embedding_size))
+        # premise/hypothesis pair
+        l_question_pe_in = lasagne.layers.InputLayer(shape=(batch_size, 2, max_sentlen, embedding_size))
 
         A, C = lasagne.init.Normal(std=0.1).sample((len(vocab)+1, embedding_size)), lasagne.init.Normal(std=0.1)
-        A_T, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+        A_T, C_T, B_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
         W = A if self.adj_weight_tying else lasagne.init.Normal(std=0.1)
 
-        l_question_in = lasagne.layers.ReshapeLayer(l_question_in, shape=(batch_size * max_sentlen, ))
+        # premise/hypothesis pair
+        l_question_in = lasagne.layers.ReshapeLayer(l_question_in, shape=(batch_size * 2 * max_sentlen, ))
         # Positional Embedding for b
         l_B_embedding = lasagne.layers.EmbeddingLayer(l_question_in, len(vocab)+1, embedding_size, W=W)
         B = l_B_embedding.W
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 1, max_sentlen, embedding_size))
+        # premise/hypothesis pair
+        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 2, max_sentlen, embedding_size))
         l_B_embedding = lasagne.layers.ElemwiseMergeLayer((l_B_embedding, l_question_pe_in), merge_function=T.mul)
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, max_sentlen, embedding_size))
-        l_B_embedding = SumLayer(l_B_embedding, axis=1)
+
+        #l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, max_sentlen, embedding_size))
+        l_B_embedding = SumLayer(l_B_embedding, axis=2)
+        l_B_embedding = TemporalEncodingLayer(l_B_embedding, T=B_T)
+        self.B_T = l_B_embedding.T
+        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 2 * embedding_size))
         #l_B_embedding = PositionalEncodingLayer([l_question_in, l_question_pe_in], vocab, L=W, sum_axis=1, max_seq_len=1)
         #B = l_B_embedding.embedding
 
@@ -468,7 +483,8 @@ class Model:
 
         """
         c = np.zeros((self.batch_size, self.max_seqlen), dtype=np.int32)
-        q = np.zeros((self.batch_size, ), dtype=np.int32)
+        # This represents a premise/hypothesis pair, hence why axis 1 has dim 2
+        q = np.zeros((self.batch_size, 2), dtype=np.int32)
         y = np.zeros((self.batch_size, self.num_classes), dtype=np.int32)
         c_pe = np.zeros((self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
         q_pe = np.zeros((self.batch_size, 1, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
@@ -479,6 +495,7 @@ class Model:
             c[i, :len(row)] = row
 
         q[:len(indices)] = dataset['Q'][indices]
+
 
         # Create the positional encoding
         for key, mask in [('C', c_pe), ('Q', q_pe)]:
@@ -517,10 +534,10 @@ class Model:
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 2 # premise-hypothesis pairs only
+        max_seqlen = 20 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, offset):
+    def process_dataset(self, lines, word_to_idx, max_sentlen, labels):
         """ 
         TODO: pass in lines simply as a list of list of tokens, not a list of {text: ... , type: ...}
         knowing the premise, hypothesis ordering
@@ -535,11 +552,11 @@ class Model:
             S.append(word_indices)
             
             if i % 2:
-                indices = [offset+i-j for j in np.arange(2, 22)]
+                indices = [i-j for j in np.arange(2, 22)]
                 
                 C.append(indices)
-                Q.append([offset+   i, offset+i-1])
-                print "premise/hypothesis: ", lines[offset+i], " ", lines[offset+i-1], " ", offset+i
+                Q.append([i, i-1])
+                print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
                 print len(lines)
                 # One label per every two examples
                 Y.append(labels[int (i/2) ])
