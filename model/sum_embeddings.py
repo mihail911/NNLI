@@ -11,7 +11,6 @@ if __name__ == '__main__':
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.append(root_dir)
 
-
 sys.path.append("/Users/mihaileric/Documents/Research/Lasagne")
 
 import lasagne

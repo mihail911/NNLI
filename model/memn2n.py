@@ -1,4 +1,5 @@
 from __future__ import division
+import os
 import argparse
 import glob
 import sys
@@ -7,6 +8,10 @@ import lasagne
 import nltk
 import numpy as np
 
+# Get top of project path 
+if __name__ == '__main__':
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.append(root_dir)
 
 import theano
 import theano.tensor as T
@@ -14,6 +19,7 @@ import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
+from util.utils import sick_reader
 
 import warnings
 warnings.filterwarnings('ignore', '.*topo.*')
@@ -67,8 +73,10 @@ class SumLayer(lasagne.layers.Layer):
         return T.sum(input, axis=self.axis)
 
 # An alternate way to represent  sentences into a vector (m_i in diagram)
-class TemporalEncodingLayer(lasagne.layers.Layer):
-
+class TemporalEncodingLayer(lasagne.layers.Layer):  
+    """
+    TODO: Force self.T to have width 2, to apply temporal locality only to adjacent premise-hypothesis pairs.
+    """
     def __init__(self, incoming, T=lasagne.init.Normal(std=0.1), **kwargs):
         super(TemporalEncodingLayer, self).__init__(incoming, **kwargs)
         self.T = self.add_param(T, self.input_shape[-2:], name="T")
@@ -202,25 +210,52 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
 class Model:
 
     def __init__(self, train_file, test_file, batch_size=32, embedding_size=20, max_norm=40, lr=0.01, num_hops=3, adj_weight_tying=True, linear_start=True, **kwargs):
-        train_lines, test_lines = self.get_lines(train_file), self.get_lines(test_file)
+       
+        # TODO: modify / remove these three lines to provide train_lines as list of list of sentences
+        # Same for test_lines
+        # also get vocab
+
+        filenames = (root_dir + "/data/SICK/SICK_train_parsed.txt", root_dir + "/data/SICK/SICK_dev_parsed.txt", 
+                     root_dir + "/data/SICK/SICK_test_parsed.txt")
+        reader = sick_reader
+        vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = get_vocab(filenames, reader)
+
+        train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
+        test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
+
+        print "train_lines | test_lines: ", len(train_lines), len(test_lines)
+
         lines = np.concatenate([train_lines, test_lines], axis=0)
-        vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = self.get_vocab(lines)
+        print "concat lines: ", lines.shape
+        quit()
+        # ---------------------------------------
+        # train_lines, test_lines = self.get_lines(train_file), self.get_lines(test_file)
+        # lines = np.concatenate([train_lines, test_lines], axis=0)
+        # vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = self.get_vocab(lines)
+        # ---------------------------------------
+
 
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, offset=0)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, offset=len(S_train))
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels, offset=0)
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels, offset=len(S_train))
         S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
+
+        print "Processed dataset"
+        # quit()
+
         for i in range(10):
             for k in ['C', 'Q', 'Y']:
                 print k, self.data['test'][k][i]
         print 'batch_size:', batch_size, 'max_seqlen:', max_seqlen, 'max_sentlen:', max_sentlen
         print 'sentences:', S.shape
-        print 'vocab:', len(vocab), vocab
+        # print 'vocab:', len(vocab), vocab
         for d in ['train', 'test']:
             print d,
             for k in ['C', 'Q', 'Y']:
                 print k, self.data[d][k].shape,
             print ''
+
+        quit()
 
         lb = LabelBinarizer()
         lb.fit(list(vocab))
@@ -426,6 +461,12 @@ class Model:
             dataset[k] = dataset[k][p]
 
     def set_shared_variables(self, dataset, index):
+        """
+        Sets the shared variables before runnning the network.
+        Inputs:
+        - dataset: a dictionary with keys 'C', 'Q', 'Y', containing padded context, query, and output sentence indices,
+
+        """
         c = np.zeros((self.batch_size, self.max_seqlen), dtype=np.int32)
         q = np.zeros((self.batch_size, ), dtype=np.int32)
         y = np.zeros((self.batch_size, self.num_classes), dtype=np.int32)
@@ -439,6 +480,7 @@ class Model:
 
         q[:len(indices)] = dataset['Q'][indices]
 
+        # Create the positional encoding
         for key, mask in [('C', c_pe), ('Q', q_pe)]:
             for i, row in enumerate(dataset[key][indices]):
                 sentences = self.S[row].reshape((-1, self.max_sentlen))
@@ -456,17 +498,18 @@ class Model:
         self.q_pe_shared.set_value(q_pe)
 
     def get_vocab(self, lines):
+        """ 
+        Inputs:
+        - lines: A list of sentences, where a sentence is a list of words.
+        """
         vocab = set()
         max_sentlen = 0
         for i, line in enumerate(lines):
-            words = nltk.word_tokenize(line['text'])
-            max_sentlen = max(max_sentlen, len(words))
-            for w in words:
+            max_sentlen = max(max_sentlen, len(line)) 
+            for w in line:
                 vocab.add(w)
-            if line['type'] == 'q':
-                vocab.add(line['answer'])
-
-        word_to_idx = {}
+           
+        word_to_idx = {} 
         for w in vocab:
             word_to_idx[w] = len(word_to_idx) + 1
 
@@ -474,29 +517,33 @@ class Model:
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 0
-        for i, line in enumerate(lines):
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [idx for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                max_seqlen = max(len(indices), max_seqlen)
-
+        max_seqlen = 2 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, offset):
+    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, offset):
+        """ 
+        TODO: pass in lines simply as a list of list of tokens, not a list of {text: ... , type: ...}
+        knowing the premise, hypothesis ordering
+        TODO: pass in the labels list too
+        """
+
         S, C, Q, Y = [], [], [], []
 
         for i, line in enumerate(lines):
-            word_indices = [word_to_idx[w] for w in nltk.word_tokenize(line['text'])]
+            word_indices = [word_to_idx[w] for w in line]
             word_indices += [0] * (max_sentlen - len(word_indices))
             S.append(word_indices)
-            if line['type'] == 'q':
-                id = line['id']-1
-                indices = [offset+idx+1 for idx in range(i-id, i) if lines[idx]['type'] == 's'][::-1][:50]
-                line['refs'] = [indices.index(offset+i+1-id+ref) for ref in line['refs']]
+            
+            if i % 2:
+                indices = [offset+i-j for j in np.arange(2, 22)]
+                
                 C.append(indices)
-                Q.append(offset+i+1)
-                Y.append(line['answer'])
+                Q.append([offset+   i, offset+i-1])
+                print "premise/hypothesis: ", lines[offset+i], " ", lines[offset+i-1], " ", offset+i
+                print len(lines)
+                # One label per every two examples
+                Y.append(labels[int (i/2) ])
+
         return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
 
     def get_lines(self, fname):
@@ -519,6 +566,58 @@ class Model:
 def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1')
 
+def get_vocab(filenames, reader):
+        """ 
+        Inputs:
+        - filenames: a list of files to look through to form the vocabulary
+        - reader: a reader function that takes in the filename and emits a line-by-line tuple 
+          of (label, premise, hypothesis) for each ex.
+        """
+        vocab = set()
+        max_sentlen = 0
+
+        for fname in filenames:
+            for _, p, h in reader(fname):
+                for line in (p, h):
+                    max_sentlen = max(max_sentlen, len(line)) 
+                    for w in line:
+                        vocab.add(w)
+           
+        word_to_idx = {} 
+        for w in vocab:
+            word_to_idx[w] = len(word_to_idx) + 1
+
+        idx_to_word = {}
+        for w, idx in word_to_idx.iteritems():
+            idx_to_word[idx] = w
+
+        max_seqlen = 2 # premise-hypothesis pairs only
+        return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
+
+
+def parse_SICK(filename, word_to_idx):
+    """ 
+    Prototype method to parse the SICK dataset into the format for MemN2N.
+    Inputs:
+    - filename: the SICK file to parse
+    - word_to_idx: a comprehensive vocabulary mapping
+    """
+    labels, sentences = [], []
+    for l, premise, hypothesis in sick_reader(filename):
+        sentences.append(premise)
+        sentences.append(hypothesis)
+        labels.append(l)
+
+    return labels, sentences
+    # lb = LabelBinarizer()
+    # y_hot = lb.fit_transform(train_labels)
+      
+    # Convert the sentences list into a numpy array of the words
+    # S = np.zeros(shape=(count, max_sentlen), dtype=np.int32)
+    # for i, s in enumerate(total_sentences):
+    #     for j, w in enumerate(s):
+    #         S[i, j] = word_to_idx[w] 
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -540,12 +639,22 @@ def main():
     print 'args:', args
     print '*' * 80
 
-    if args.train_file == '' or args.test_file == '':
-        args.train_file = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
-        args.test_file = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
+    # if args.train_file == '' or args.test_file == '':
+    #     args.train_file = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
+    #     args.test_file = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
 
     model = Model(**args.__dict__)
     model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
 
 if __name__ == '__main__':
+
     main()
+    # filenames = (root_dir + "/data/SICK/SICK_train_parsed.txt", root_dir + "/data/SICK/SICK_dev_parsed.txt", 
+    #              root_dir + "/data/SICK/SICK_test_parsed.txt")
+    # reader = sick_reader
+    # vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = get_vocab(filenames, reader)
+
+    # train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
+    # test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
+    # lines = np.concatenate([train_lines, test_lines], axis=0)
+    #   

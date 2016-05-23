@@ -16,9 +16,12 @@ from load_snli_data import loadExampleLabels, loadExampleSentences
 root_dir = os.path.dirname(os.path.dirname(__file__))
 sys.path.append(root_dir)
 
+sick_dir = "../data/SICK/"
+data_dir = "../data/snli/"
 
 WORD_RE = re.compile(r"([^ \(\)]+)", re.UNICODE)
 
+# Tree parsing 
 def str2tree(s):
     """Turns labeled bracketing s into a tree structure (tuple of tuples)"""
     s = WORD_RE.sub(r'"\1",', s)
@@ -36,34 +39,35 @@ def leaves(t):
             words += leaves(x)
     return words
 
-os.chdir("../")
-data_dir = os.getcwd() + "/data/"
+def tree2sent(t1, t2):
+    return ' '.join(leaves(t1)), ' '.join(leaves(t2))
+
 
 def sick_reader(src_filename):
     count = 1
+    print "src file: ", src_filename
     for example in csv.reader(file(src_filename), delimiter="\t"):
-        print "Sentence count: ", count
         label, t1, t2 = example[:3]
         if not label.startswith('%') and not label=="gold_label": # Some files use leading % for comments.
-            yield (label, str2tree(t1), str2tree(t2))
+            yield (label, leaves(str2tree(t1)), leaves(str2tree(t2)))
         count += 1
 
 
 #Readers for processing SICK datasets
 def sick_train_reader():
-    return sick_reader(src_filename=data_dir+"SICK_train_parsed.txt", semafor_filename=data_dir+"semafor_train.xml")
+    return sick_reader(src_filename=sick_dir+"SICK_train_parsed.txt")
 
 
 def sick_dev_reader():
-    return sick_reader(src_filename=data_dir+"SICK_dev_parsed.txt", semafor_filename=data_dir+"semafor_dev.xml")
+    return sick_reader(src_filename=sick_dir+"SICK_dev_parsed.txt")
 
 
 def sick_test_reader():
-    return sick_reader(src_filename=data_dir+"SICK_test_parsed.txt", semafor_filename=data_dir+"semafor_test.xml")
+    return sick_reader(src_filename=sick_dir+"SICK_test_parsed.txt")
 
 
 def sick_train_dev_reader():
-    return sick_reader(src_filename=data_dir+"SICK_train+dev_parsed.txt", semafor_filename=data_dir+"semafor_traindev.xml")
+    return sick_reader(src_filename=sick_dir+"SICK_train+dev_parsed.txt")
 
 
 def snli_reader(src_filename):
