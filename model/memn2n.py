@@ -305,7 +305,7 @@ class Model:
         # {x_i}
         c = T.imatrix()
         # query
-        q = T.ivector()
+        q = T.imatrix()
         # label
         y = T.imatrix()
 
@@ -396,7 +396,7 @@ class Model:
             q_pe: self.q_pe_shared
         }
 
-        self.train_model = theano.function([], cost, givens=givens, updates=updates)
+        self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='warn')
         self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
 
         zero_vec_tensor = T.vector()
