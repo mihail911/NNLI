@@ -300,7 +300,7 @@ class Model:
         self.build_network(self.nonlinearity)
 
         print "Network built"
-        quit()
+        #quit()
 
 
     def build_network(self, nonlinearity):
@@ -388,7 +388,6 @@ class Model:
         cost = T.nnet.binary_crossentropy(probas, y).sum()
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
-        print 'params:', params
         grads = T.grad(cost, params)
         scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
         updates = lasagne.updates.sgd(scaled_grads, params, learning_rate=self.lr)
@@ -423,7 +422,17 @@ class Model:
     def compute_f1(self, dataset):
         n_batches = len(dataset['Y']) // self.batch_size
         y_pred = np.concatenate([self.predict(dataset, i) for i in xrange(n_batches)]).astype(np.int32) - 1
-        y_true = [self.vocab.index(y) for y in dataset['Y'][:len(y_pred)]]
+        #y_true = [self.lb.transform(y) for y in dataset['Y'][:len(y_pred)]]
+
+        y_true = self.lb.transform(dataset['Y'][:len(y_pred)])
+
+        # Convert back to single label representation
+        #y_true_max = y_true.argmax(axis=1)
+        y_true = y_true.reshape(len(y_pred))
+        y_true_confuse = [int(out) - 1 for out in y_true]
+
+        y_true = y_true_confuse
+
         print metrics.confusion_matrix(y_true, y_pred)
         print metrics.classification_report(y_true, y_pred)
         errors = []
@@ -524,7 +533,7 @@ class Model:
                         mask[i, ii, j, :] = (1 - (j+1)/J) - ((np.arange(self.embedding_size)+1)/self.embedding_size)*(1 - 2*(j+1)/J)
 
 
-        y[:len(indices), 1:self.num_classes] = self.lb.transform(dataset['Y'][indices])
+        y[:len(indices), :] = self.lb.transform(dataset['Y'][indices])
 
         self.c_shared.set_value(c)
         self.q_shared.set_value(q)
@@ -620,15 +629,10 @@ def parse_SICK(filename, word_to_idx):
         sentences.append(hypothesis)
         labels.append(l)
 
-    return labels, sentences
-    # lb = LabelBinarizer()
-    # y_hot = lb.fit_transform(train_labels)
-      
-    # Convert the sentences list into a numpy array of the words
-    # S = np.zeros(shape=(count, max_sentlen), dtype=np.int32)
-    # for i, s in enumerate(total_sentences):
-    #     for j, w in enumerate(s):
-    #         S[i, j] = word_to_idx[w] 
+    # Overfit on smaller dataset
+    return labels[:10], sentences[:20]
+    #return labels, sentences
+
 
 
 def main():
@@ -637,7 +641,7 @@ def main():
     parser.add_argument('--task', type=int, default=1, help='Task#')
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=5, help='Batch size')
     parser.add_argument('--embedding_size', type=int, default=20, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
