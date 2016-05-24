@@ -266,7 +266,7 @@ class Model:
 
 
         lb = LabelBinarizer()
-        lb.fit(train_labels)
+        lb.fit(train_labels + test_labels)
         
         # self.data['train']['Y'] = lb.transform(self.data['train']['Y'])
         # self.data['test']['Y'] = lb.transform(self.data['test']['Y'])
@@ -422,16 +422,15 @@ class Model:
     def compute_f1(self, dataset):
         n_batches = len(dataset['Y']) // self.batch_size
         y_pred = np.concatenate([self.predict(dataset, i) for i in xrange(n_batches)]).astype(np.int32) - 1
-        #y_true = [self.lb.transform(y) for y in dataset['Y'][:len(y_pred)]]
 
-        y_true = self.lb.transform(dataset['Y'][:len(y_pred)])
+        y_true = self.lb.transform([y for y in dataset['Y'][:len(y_pred)]])
 
         # Convert back to single label representation
-        #y_true_max = y_true.argmax(axis=1)
+        y_true = y_true.argmax(axis=1)
         y_true = y_true.reshape(len(y_pred))
         y_true_confuse = [int(out) - 1 for out in y_true]
 
-        y_true = y_true_confuse
+        y_true = np.array(y_true_confuse) # np.array(y_true_confuse)
 
         print metrics.confusion_matrix(y_true, y_pred)
         print metrics.classification_report(y_true, y_pred)
@@ -630,7 +629,7 @@ def parse_SICK(filename, word_to_idx):
         labels.append(l)
 
     # Overfit on smaller dataset
-    return labels[:10], sentences[:20]
+    return labels[:200], sentences[:400]
     #return labels, sentences
 
 
@@ -655,9 +654,6 @@ def main():
     print 'args:', args
     print '*' * 80
 
-    # if args.train_file == '' or args.test_file == '':
-    #     args.train_file = glob.glob('data/en/qa%d_*train.txt' % args.task)[0]
-    #     args.test_file = glob.glob('data/en/qa%d_*test.txt' % args.task)[0]
 
     model = Model(**args.__dict__)
     model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
