@@ -228,7 +228,8 @@ class Model:
                      root_dir + "/data/SICK/SICK_test_parsed.txt")
         reader = sick_reader
         vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = get_vocab(filenames, reader)
-
+        print "MSL:", max_seqlen
+        print "-" * 80
         train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
         test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
 
@@ -279,6 +280,9 @@ class Model:
 
         self.batch_size = batch_size
         self.max_seqlen = max_seqlen
+        print "-" * 80
+        
+        
         self.max_sentlen = max_sentlen
         self.embedding_size = embedding_size
         self.num_classes = 3 #len(vocab) + 1
@@ -296,6 +300,7 @@ class Model:
         self.build_network(self.nonlinearity)
 
         print "Network built"
+        quit()
 
 
     def build_network(self, nonlinearity):
@@ -499,7 +504,7 @@ class Model:
         q = np.zeros((self.batch_size, 2), dtype=np.int32)
         y = np.zeros((self.batch_size, self.num_classes), dtype=np.int32)
         c_pe = np.zeros((self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
-        q_pe = np.zeros((self.batch_size, 1, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
+        q_pe = np.zeros((self.batch_size, 2, self.max_sentlen, self.embedding_size), dtype=theano.config.floatX)
 
         indices = range(index*self.batch_size, (index+1)*self.batch_size)
         for i, row in enumerate(dataset['C'][indices]):
@@ -518,6 +523,7 @@ class Model:
                     for j in np.arange(J):
                         mask[i, ii, j, :] = (1 - (j+1)/J) - ((np.arange(self.embedding_size)+1)/self.embedding_size)*(1 - 2*(j+1)/J)
 
+
         y[:len(indices), 1:self.num_classes] = self.lb.transform(dataset['Y'][indices])
 
         self.c_shared.set_value(c)
@@ -525,30 +531,6 @@ class Model:
         self.a_shared.set_value(y)
         self.c_pe_shared.set_value(c_pe)
         self.q_pe_shared.set_value(q_pe)
-
-
-    def get_vocab(self, lines):
-        """ 
-        Inputs:
-        - lines: A list of sentences, where a sentence is a list of words.
-        """
-        vocab = set()
-        max_sentlen = 0
-        for i, line in enumerate(lines):
-            max_sentlen = max(max_sentlen, len(line)) 
-            for w in line:
-                vocab.add(w)
-           
-        word_to_idx = {} 
-        for w in vocab:
-            word_to_idx[w] = len(word_to_idx) + 1
-
-        idx_to_word = {}
-        for w, idx in word_to_idx.iteritems():
-            idx_to_word[idx] = w
-
-        max_seqlen = 20 # premise-hypothesis pairs only
-        return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
     def process_dataset(self, lines, word_to_idx, max_sentlen, labels):
         """ 
@@ -621,7 +603,7 @@ def get_vocab(filenames, reader):
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 2 # premise-hypothesis pairs only
+        max_seqlen = 20 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
 
