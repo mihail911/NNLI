@@ -24,7 +24,7 @@ from util.utils import sick_reader
 import warnings
 warnings.filterwarnings('ignore', '.*topo.*')
 
-_DEBUG=True
+_DEBUG=False
 
 class InnerProductLayer(lasagne.layers.MergeLayer):
 
@@ -156,11 +156,13 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         batch_size, max_seqlen, max_sentlen = self.input_shapes[0]
         assert(max_seqlen % 2 == 0)
 
-        # inputs
+        # Inputs
+        #------------------
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        # Error here...
         l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, 2*embedding_size))
         l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
+        #------------------
+
 
         # generate the temporal encoding of sentence sequences using per-word positional encoding which is l_context_pe_in
         pe_A_encoding = PositionalEncodingLayer([l_context_in, l_context_pe_in], vocab, A)
@@ -263,8 +265,17 @@ class Model:
 
 
         lb = LabelBinarizer()
-        lb.fit(list(vocab))
-        vocab = lb.classes_.tolist()
+        lb.fit(train_labels)
+        
+        # self.data['train']['Y'] = lb.transform(self.data['train']['Y'])
+        # self.data['test']['Y'] = lb.transform(self.data['test']['Y'])
+
+        # print "-" * 80
+        # print "y_hot labels for train: ", self.data['train']['Y'].shape
+        # print self.data['train']['Y']
+        # print "-" * 80
+
+        # quit()
 
         self.batch_size = batch_size
         self.max_seqlen = max_seqlen
@@ -341,9 +352,7 @@ class Model:
         l_B_embedding = SumLayer(l_B_embedding, axis=2)
         l_B_embedding = TemporalEncodingLayer(l_B_embedding, T=B_T)
         self.B_T = l_B_embedding.T
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 2 * embedding_size))
-        #l_B_embedding = PositionalEncodingLayer([l_question_in, l_question_pe_in], vocab, L=W, sum_axis=1, max_seq_len=1)
-        #B = l_B_embedding.embedding
+        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, 2*embedding_size))
 
         self.mem_layers = [MemoryNetworkLayer((l_context_in, l_B_embedding, l_context_pe_in), vocab, embedding_size, A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity)]
         
@@ -360,10 +369,11 @@ class Model:
 
             self.mem_layers += [MemoryNetworkLayer((l_context_in, self.mem_layers[-1], l_context_pe_in), vocab, embedding_size, A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity)]
 
-        if self.adj_weight_tying:
-            l_pred = TransposedDenseLayer(self.mem_layers[-1], self.num_classes, W=self.mem_layers[-1].C, b=None, nonlinearity=lasagne.nonlinearities.softmax)
-        else:
-            l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.Normal(std=0.1), b=None, nonlinearity=lasagne.nonlinearities.softmax)
+        # if self.adj_weight_tying:
+        #     l_pred = TransposedDenseLayer(self.mem_layers[-1], self.num_classes, W=self.mem_layers[-1].C, b=None, nonlinearity=lasagne.nonlinearities.softmax)
+        # else:
+        # must output to num_labels
+        l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.Normal(std=0.1), b=None, nonlinearity=lasagne.nonlinearities.softmax)
 
         probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc, l_question_in: qq, l_context_pe_in: c_pe, l_question_pe_in: q_pe})
         probas = T.clip(probas, 1e-7, 1.0-1e-7)
@@ -516,6 +526,7 @@ class Model:
         self.c_pe_shared.set_value(c_pe)
         self.q_pe_shared.set_value(q_pe)
 
+
     def get_vocab(self, lines):
         """ 
         Inputs:
@@ -561,9 +572,9 @@ class Model:
                 print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
                 print len(lines)
                 # One label per every two examples
-                Y.append(labels[int (i/2) ])
+                #Y.append(labels[int (i/2) ])
 
-        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(Y)
+        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(labels)
 
     def get_lines(self, fname):
         lines = []
@@ -694,6 +705,7 @@ def small_test():
     mnl_2 = MemoryNetworkLayer((l_context_in, mnl_1, l_context_pe_in), vocab, embedding_size, 
                     A=A, A_T=A_T, C=C, C_T=C_T,
                     nonlinearity=lasagne.nonlinearities.softmax)
+
     A, A_T = C, C_T
     C, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
 
@@ -717,6 +729,7 @@ def small_test():
     print output.shape
 
 if __name__ == '__main__':
+
     if _DEBUG:
         small_test()
     else:
