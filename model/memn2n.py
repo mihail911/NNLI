@@ -300,7 +300,6 @@ class Model:
         self.build_network(self.nonlinearity)
 
         print "Network built"
-        #quit()
 
 
     def build_network(self, nonlinearity):
@@ -390,7 +389,7 @@ class Model:
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
         scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.sgd(scaled_grads, params, learning_rate=self.lr)
+        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
 
         givens = {
             c: self.c_shared,
@@ -640,7 +639,7 @@ def main():
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
     parser.add_argument('--batch_size', type=int, default=5, help='Batch size')
-    parser.add_argument('--embedding_size', type=int, default=20, help='Embedding size')
+    parser.add_argument('--embedding_size', type=int, default=5, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--num_hops', type=int, default=3, help='Num hops')
