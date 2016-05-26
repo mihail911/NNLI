@@ -629,15 +629,14 @@ def parse_SICK(filename, word_to_idx):
         labels.append(l)
 
     # Overfit on smaller dataset
-    return labels[:200], sentences[:400]
-    #return labels, sentences
+    #return labels[:200], sentences[:400]
+    return labels, sentences
 
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.register('type', 'bool', str2bool)
-    parser.add_argument('--task', type=int, default=1, help='Task#')
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
     parser.add_argument('--batch_size', type=int, default=5, help='Batch size')
@@ -649,11 +648,11 @@ def main():
     parser.add_argument('--linear_start', type='bool', default=False, help='Whether to start with linear activations')
     parser.add_argument('--shuffle_batch', type='bool', default=True, help='Whether to shuffle minibatches')
     parser.add_argument('--n_epochs', type=int, default=100, help='Num epochs')
+    parser.add_argument('--l2_reg', type=float, default=0.01, help='l2 regularization')
     args = parser.parse_args()
     print '*' * 80
     print 'args:', args
     print '*' * 80
-
 
     model = Model(**args.__dict__)
     model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
