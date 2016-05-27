@@ -78,7 +78,7 @@ class TemporalEncodingLayer(lasagne.layers.Layer):
     """
     TODO: Force self.T to have width 2, to apply temporal locality only to adjacent premise-hypothesis pairs.
     """
-    def __init__(self, incoming, T=lasagne.init.Normal(std=0.1), **kwargs):
+    def __init__(self, incoming, T=lasagne.init.GlorotNormal(), **kwargs):
         super(TemporalEncodingLayer, self).__init__(incoming, **kwargs)
         self.T = self.add_param(T, self.input_shape[-2:], name="T")
 
@@ -246,11 +246,11 @@ class Model:
 
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
+        # make train + test the same
         S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels)
         S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
 
         print "Processed dataset"
-        # quit()
 
         for i in range(10):
             for k in ['C', 'Q', 'Y']:
@@ -268,16 +268,6 @@ class Model:
         lb = LabelBinarizer()
         lb.fit(train_labels + test_labels)
         
-        # self.data['train']['Y'] = lb.transform(self.data['train']['Y'])
-        # self.data['test']['Y'] = lb.transform(self.data['test']['Y'])
-
-        # print "-" * 80
-        # print "y_hot labels for train: ", self.data['train']['Y'].shape
-        # print self.data['train']['Y']
-        # print "-" * 80
-
-        # quit()
-
         self.batch_size = batch_size
         self.max_seqlen = max_seqlen
         print "-" * 80
@@ -340,9 +330,9 @@ class Model:
         # premise/hypothesis pair
         l_question_pe_in = lasagne.layers.InputLayer(shape=(batch_size, 2, max_sentlen, embedding_size))
 
-        A, C = lasagne.init.Normal(std=0.1).sample((len(vocab)+1, embedding_size)), lasagne.init.Normal(std=0.1)
-        A_T, C_T, B_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
-        W = A if self.adj_weight_tying else lasagne.init.Normal(std=0.1)
+        A, C = lasagne.init.GlorotNormal().sample((len(vocab)+1, embedding_size)), lasagne.init.GlorotNormal()
+        A_T, C_T, B_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
+        W = A if self.adj_weight_tying else lasagne.init.GlorotNormal()
 
         # premise/hypothesis pair
         l_question_in = lasagne.layers.ReshapeLayer(l_question_in, shape=(batch_size * 2 * max_sentlen, ))
@@ -365,8 +355,8 @@ class Model:
 
             if self.adj_weight_tying:
                 print "*** RUNNING IN WEIGHT_TIED MODE ***"
-                A, C = self.mem_layers[-1].C, lasagne.init.Normal(std=0.1)
-                A_T, C_T = self.mem_layers[-1].C_T, lasagne.init.Normal(std=0.1)
+                A, C = self.mem_layers[-1].C, lasagne.init.GlorotNormal()
+                A_T, C_T = self.mem_layers[-1].C_T, lasagne.init.GlorotNormal()
             else:  # RNN style
                 print "*** RUNNING IN RNN MODE *** "
                 A, C = self.mem_layers[-1].A, self.mem_layers[-1].C
@@ -378,7 +368,7 @@ class Model:
         #     l_pred = TransposedDenseLayer(self.mem_layers[-1], self.num_classes, W=self.mem_layers[-1].C, b=None, nonlinearity=lasagne.nonlinearities.softmax)
         # else:
         # must output to num_labels
-        l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.Normal(std=0.1), b=None, nonlinearity=lasagne.nonlinearities.softmax)
+        l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.GlorotNormal(), b=None, nonlinearity=lasagne.nonlinearities.softmax)
 
         probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc, l_question_in: qq, l_context_pe_in: c_pe, l_question_pe_in: q_pe})
         probas = T.clip(probas, 1e-7, 1.0-1e-7)
@@ -390,7 +380,7 @@ class Model:
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
         scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.sgd(scaled_grads, params, learning_rate=self.lr)
+        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
 
         givens = {
             c: self.c_shared,
@@ -555,9 +545,9 @@ class Model:
             S.append(word_indices)
             
             if i % 2:
-                indices = [i-j for j in np.arange(2, 22)]
-                
-                C.append(indices)
+                #indices = [i-j for j in np.arange(2, 22)]
+                # premise-hypothesis adding
+                C.append([i, i-1])
                 Q.append([i, i-1])
                 print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
                 print len(lines)
@@ -611,7 +601,7 @@ def get_vocab(filenames, reader):
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 20 # premise-hypothesis pairs only
+        max_seqlen = 2 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
 
@@ -666,8 +656,8 @@ def small_test():
     num_classes = 3
     vocab = [chr(i) for i in range(65, 122)]
 
-    A, C = lasagne.init.Normal(std=0.1).sample((len(vocab)+1, embedding_size)), lasagne.init.Normal(std=0.1)
-    A_T, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+    A, C = lasagne.init.GlorotNormal().sample((len(vocab)+1, embedding_size)), lasagne.init.GlorotNormal()
+    A_T, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
 
     # l_B_embedding = theano.shared(np.zeros((batch_size, 2*embedding_size), dtype=theano.config.floatX))
     l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
@@ -681,21 +671,21 @@ def small_test():
     
     # weight tying
     A, A_T = C, C_T
-    C, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+    C, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
 
     mnl_2 = MemoryNetworkLayer((l_context_in, mnl_1, l_context_pe_in), vocab, embedding_size, 
                     A=A, A_T=A_T, C=C, C_T=C_T,
                     nonlinearity=lasagne.nonlinearities.softmax)
 
     A, A_T = C, C_T
-    C, C_T = lasagne.init.Normal(std=0.1), lasagne.init.Normal(std=0.1)
+    C, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
 
 
     mem_network = MemoryNetworkLayer((l_context_in, mnl_2, l_context_pe_in), vocab, embedding_size, 
                     A=A, A_T=A_T, C=C, C_T=C_T,
                     nonlinearity=lasagne.nonlinearities.softmax)
     
-    l_pred = lasagne.layers.DenseLayer(mem_network, num_classes, W=lasagne.init.Normal(std=0.1), 
+    l_pred = lasagne.layers.DenseLayer(mem_network, num_classes, W=lasagne.init.GlorotNormal(), 
                                        b=None, nonlinearity=lasagne.nonlinearities.softmax)
 
     
