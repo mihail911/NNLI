@@ -3,8 +3,10 @@ import os
 import argparse
 import glob
 import sys
+import csv
 sys.path.append("/Users/mihaileric/Documents/Research/Lasagne")
 import lasagne
+from lasagne.regularization import regularize_layer_params_weighted, l2, l1, regularize_network_params
 import nltk
 import numpy as np
 
@@ -72,6 +74,19 @@ class SumLayer(lasagne.layers.Layer):
 
     def get_output_for(self, input, **kwargs):
         return T.sum(input, axis=self.axis)
+
+class ScaleSumLayer(SumLayer):
+
+    def __init__(self, incoming, axis, **kwargs):
+        super(SumLayer, self).__init__(incoming, **kwargs)
+        self.axis = axis
+
+    def get_output_shape_for(self, input_shape):
+        return input_shape[:self.axis] + input_shape[self.axis+1:]
+
+    def get_output_for(self, input, **kwargs):
+        return T.mean(input, axis=self.axis)
+
 
 # An alternate way to represent  sentences into a vector (m_i in diagram)
 class TemporalEncodingLayer(lasagne.layers.Layer):  
@@ -254,7 +269,7 @@ class Model:
 
 
         self.max_sentlen = max_sentlen
-        self.embedding_size = embedding_size
+        self.embedding_size = 100
         self.num_classes = 3 #len(vocab) + 1
         self.vocab = vocab
         self.adj_weight_tying = adj_weight_tying
@@ -265,12 +280,32 @@ class Model:
         self.max_norm = max_norm
         self.S = S
         self.idx_to_word = idx_to_word
+        self.word_to_idx = word_to_idx
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
         self.build_simple_network()
 
         print "Network built"
+    
+    def build_glove_embedding(self, filepath, hidden_size):
+        """ 
+        Builds a glove vector table for the embeddings from the given filename.
+        """
+
+        reader = csv.reader(file(filepath), delimiter=' ', quoting=csv.QUOTE_NONE)
+        colnames = None
+        print "building glove vectors..."
+        # Kaiming-He
+        mat = 0.2*np.random.randn(len(self.word_to_idx) + 1, hidden_size)
+
+        for line in reader:        
+            if line[0] in self.word_to_idx: 
+                idx = self.word_to_idx[line[0]]
+                mat[idx, :] = np.array(map(float, line[1: ]))
         
+        print "Done building vectors"
+        return mat
+
         #quit()
     def build_simple_network(self):
         """
@@ -282,7 +317,7 @@ class Model:
         - 3 hidden layers with relu, hidden dim (512, 512, 256)
         """
         batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
-        self.hidden_size = 20
+        self.hidden_size = 256
         c = T.imatrix()
         y = T.imatrix()
 
@@ -294,24 +329,42 @@ class Model:
 
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
         
-        L = lasagne.init.HeNormal().sample( (len(vocab) + 1, embedding_size))
-        embedding = lasagne.layers.EmbeddingLayer(l_context_in,  len(vocab)+1, embedding_size, W=L)
-        sum_embeddings = SumLayer(embedding, axis=2)
+        #L = lasagne.init.HeNormal().sample( (len(vocab) + 1, embedding_size))
+        # Do glove init
+        L = self.build_glove_embedding(root_dir + "/data/glove/glove.6B.100d.txt", hidden_size=embedding_size)
+        print L
+        print "maxseqlen: ", max_seqlen
+
+        embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab) + 1, embedding_size, W=L)
+
+        sum_embeddings = ScaleSumLayer(embedding, axis=2)
         
         reshape_sum = lasagne.layers.ReshapeLayer(sum_embeddings, shape=(batch_size, max_seqlen*embedding_size))
         # Fully connected layers
 
-        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size, W=lasagne.init.HeNormal())
-        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size, W=lasagne.init.HeNormal())
-        dense_3 = lasagne.layers.DenseLayer(dense_2, self.hidden_size // 2, W=lasagne.init.HeNormal())
-        l_pred = lasagne.layers.DenseLayer(dense_3, self.num_classes, nonlinearity=lasagne.nonlinearities.softmax)
+        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , W=lasagne.init.HeNormal(), 
+                                            nonlinearity=T.nnet.sigmoid)
+        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  W=lasagne.init.HeNormal(),
+                                            nonlinearity=T.nnet.sigmoid)
+        l_pred = lasagne.layers.DenseLayer(dense_2, self.num_classes, nonlinearity=lasagne.nonlinearities.softmax)
+
+        rand_in = np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen))
+        fake_probs = lasagne.layers.get_output(l_pred, {l_context_in : rand_in} ).eval()
+        print "fake_probs: ", fake_probs  
 
         probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc})
-        probas = T.clip(probas, 1e-6, 1.0-1e-6)
+       # probas = T.clip(probas, 1e-7, 1.0-1e-7)
 
         pred = T.argmax(probas, axis=1)
 
-        cost = T.nnet.binary_crossentropy(probas, y).sum()
+        
+        # l2 regularization
+        reg_coeff = 1e-1
+        p_metric = l2
+        layer_dict = {dense_1: reg_coeff, dense_2 : reg_coeff, l_pred : reg_coeff}
+        reg_cost = reg_coeff * regularize_layer_params_weighted(layer_dict, p_metric)
+
+        cost = T.nnet.binary_crossentropy(probas, y).mean() #+ reg_cost
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
