@@ -127,7 +127,7 @@ class PositionalEncodingLayer(lasagne.layers.MergeLayer):
         self.l_context_in, self.l_context_pe_in = tuple(incomings)
         batch_size, max_seq_len, max_sent_len, embed_size = self.l_context_pe_in.shape
         # This step is important: embedding matrix must be a parameter of this class. 
-        self.W = self.add_param(L, (len(vocab) + 1, embed_size), name="W")
+        self.W = self.add_param(L, (len(vocab) + 1, embed_size), name="W", trainable=False)
         self.embedding = lasagne.layers.EmbeddingLayer(self.l_context_in, len(vocab) + 1, embed_size, W=self.W)
 
         l_embedding = lasagne.layers.ReshapeLayer(self.embedding, shape=(batch_size, max_seq_len, max_sent_len, embed_size))
@@ -481,9 +481,9 @@ class Model:
                 self.build_network(nonlinearity=lasagne.nonlinearities.softmax)
                 lasagne.layers.helper.set_all_param_values(self.network, prev_weights)
             else:
-                print 'TEST', '=' * 40
+                print 'DEV', '=' * 40
                 test_f1, test_errors = self.compute_f1(self.data['test'])
-                print '*** TEST_ERROR:', (1-test_f1)*100
+                print '*** DEV_ERROR:', (1-test_f1)*100
 
             prev_train_f1 = train_f1
 
