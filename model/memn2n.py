@@ -87,6 +87,19 @@ class ScaleSumLayer(SumLayer):
     def get_output_for(self, input, **kwargs):
         return T.mean(input, axis=self.axis)
 
+class GramOverlapLayer():
+
+    def __init__(self, incoming, axis, **kwargs):
+        super(SumLayer, self).__init__(incoming, **kwargs)
+        self.axis = axis
+
+    def get_output_shape_for(self, input_shape):
+        return input_shape[:self.axis] + input_shape[self.axis+1:]
+
+    def get_output_for(self, input, **kwargs):
+        return T.mean(input, axis=self.axis)
+
+
 
 # An alternate way to represent  sentences into a vector (m_i in diagram)
 class TemporalEncodingLayer(lasagne.layers.Layer):  
@@ -305,6 +318,76 @@ class Model:
         print "Done building vectors"
         return mat
 
+    def build_logistic_network(self):
+        """
+        Builds a super simple logistic regression on top of a featurizer layer. 
+        """
+
+        batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
+        self.hidden_size = 256
+        c = T.imatrix()
+        y = T.imatrix()
+
+        self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
+        self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
+
+        S_shared = theano.shared(self.S, borrow=True)
+        cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
+
+        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
+       
+        l_feature_in = lasagne.layers.GramOverlapLayer()
+
+        sum_embeddings = ScaleSumLayer(embedding, axis=2)
+        
+        reshape_sum = lasagne.layers.ReshapeLayer(sum_embeddings, shape=(batch_size, max_seqlen*embedding_size))
+        # Fully connected layers
+
+        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , W=lasagne.init.HeNormal(), 
+                                            nonlinearity=T.nnet.sigmoid)
+        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  W=lasagne.init.HeNormal(),
+                                            nonlinearity=T.nnet.sigmoid)
+        l_pred = lasagne.layers.DenseLayer(dense_2, self.num_classes, nonlinearity=lasagne.nonlinearities.softmax)
+
+        rand_in = np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen))
+        fake_probs = lasagne.layers.get_output(l_pred, {l_context_in : rand_in} ).eval()
+        print "fake_probs: ", fake_probs  
+
+        probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc})
+       # probas = T.clip(probas, 1e-7, 1.0-1e-7)
+
+        pred = T.argmax(probas, axis=1)
+
+        
+        # l2 regularization
+        reg_coeff = 1e-1
+        p_metric = l2
+        layer_dict = {dense_1: reg_coeff, dense_2 : reg_coeff, l_pred : reg_coeff}
+        reg_cost = reg_coeff * regularize_layer_params_weighted(layer_dict, p_metric)
+
+        cost = T.nnet.categorical_crossentropy(probas, y).mean() #+ reg_cost
+
+        params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
+        grads = T.grad(cost, params)
+
+        scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
+        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
+
+        givens = {
+            c: self.c_shared,
+            y: self.a_shared,
+        }
+
+        self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='ignore')
+        self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
+
+        zero_vec_tensor = T.vector()
+        self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
+        self.set_zero = theano.function([zero_vec_tensor], on_unused_input='ignore')
+
+        #self.nonlinearity = nonlinearity
+        self.network = l_pred
+
         #quit()
     def build_simple_network(self):
         """
@@ -363,7 +446,7 @@ class Model:
         layer_dict = {dense_1: reg_coeff, dense_2 : reg_coeff, l_pred : reg_coeff}
         reg_cost = reg_coeff * regularize_layer_params_weighted(layer_dict, p_metric)
 
-        cost = T.nnet.binary_crossentropy(probas, y).mean() #+ reg_cost
+        cost = T.nnet.categorical_crossentropy(probas, y).mean() #+ reg_cost
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
@@ -542,7 +625,7 @@ class Model:
 
         pred = T.argmax(probas, axis=1)
 
-        cost = T.nnet.binary_crossentropy(probas, y).sum()
+        cost = T.nnet.categorical_crossentropy(probas, y).sum()
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
@@ -670,6 +753,8 @@ class Model:
         - dataset: a dictionary with keys 'C', 'Q', 'Y', containing padded context, query, and output sentence indices,
 
         """
+        # Commented out for simpler networks
+
         c = np.zeros((self.batch_size, self.max_seqlen), dtype=np.int32)
         # This represents a premise/hypothesis pair, hence why axis 1 has dim 2
         # q = np.zeros((self.batch_size, self.query_len), dtype=np.int32)
@@ -715,20 +800,29 @@ class Model:
 
         for i, line in enumerate(lines):
             word_indices = [word_to_idx[w] for w in line]
-            word_indices += [0] * (max_sentlen - len(word_indices))
+            padding = [0] * (max_sentlen - len(word_indices))
+            # front padding for LSTM
+            word_indices = padding + word_indices
+            print word_indices
+
             S.append(word_indices)
             
-            if i % 2:
-                #indices = [i-j for j in np.arange(2, 22)]
-                # premise-hypothesis adding
-                C.append([i, i-1])
-                Q.append([i, i-1])
-                print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
-                print len(lines)
+            C.append([i])
+            Q.append([i])
+            # Y.append(labels[i])
+            # if i % 2:
+            #     #indices = [i-j for j in np.arange(2, 22)]
+            #     # premise-hypothesis adding
+            #     C.append([i, i-1])
+            
+            #     print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
+            #     print len(lines)
                 # One label per every two examples
-                #Y.append(labels[int (i/2) ])
+         
 
-        return np.array(S, dtype=np.int32), np.array(C), np.array(Q, dtype=np.int32), np.array(labels)
+        return (np.array(S, dtype=np.int32), 
+               np.array(C), np.array(Q, dtype=np.int32), 
+               np.array(labels))
 
     def get_lines(self, fname):
         lines = []
@@ -762,10 +856,10 @@ def get_vocab(filenames, reader):
 
         for fname in filenames:
             for _, p, h in reader(fname):
-                for line in (p, h):
-                    max_sentlen = max(max_sentlen, len(line)) 
-                    for w in line:
-                        vocab.add(w)
+                max_sentlen = max(max_sentlen, len(p) + len(h)) 
+                line = p + h
+                for w in line:
+                    vocab.add(w)
            
         word_to_idx = {} 
         for w in vocab:
@@ -775,7 +869,7 @@ def get_vocab(filenames, reader):
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 2 # premise-hypothesis pairs only
+        max_seqlen = 1 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
 
@@ -788,8 +882,8 @@ def parse_SICK(filename, word_to_idx):
     """
     labels, sentences = [], []
     for l, premise, hypothesis in sick_reader(filename):
-        sentences.append(premise)
-        sentences.append(hypothesis)
+        sentences.append(premise + hypothesis)
+        #sentences.append(hypothesis)
         labels.append(l)
 
     # Overfit on smaller dataset
@@ -821,58 +915,6 @@ def main():
 
     model = Model(**args.__dict__)
     model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
-
-
-def small_test():
-    ''' 
-    Implements a small test to make sure that the memory network is functional, with synthetic data
-    '''
-    batch_size, max_seqlen, max_sentlen, embedding_size = 32, 20, 10, 25
-    num_classes = 3
-    vocab = [chr(i) for i in range(65, 122)]
-
-    A, C = lasagne.init.GlorotNormal().sample((len(vocab)+1, embedding_size)), lasagne.init.GlorotNormal()
-    A_T, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
-
-    # l_B_embedding = theano.shared(np.zeros((batch_size, 2*embedding_size), dtype=theano.config.floatX))
-    l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-    # l_context_in = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen), dtype=theano.config.floatX))
-    l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
-    # l_context_pe_in = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen), dtype=theano.config.floatX))
-    l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, 2*embedding_size))
-
-    mnl_1 = MemoryNetworkLayer((l_context_in, l_B_embedding, l_context_pe_in), vocab, embedding_size, 
-                    A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=lasagne.nonlinearities.softmax)
-    
-    # weight tying
-    A, A_T = C, C_T
-    C, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
-
-    mnl_2 = MemoryNetworkLayer((l_context_in, mnl_1, l_context_pe_in), vocab, embedding_size, 
-                    A=A, A_T=A_T, C=C, C_T=C_T,
-                    nonlinearity=lasagne.nonlinearities.softmax)
-
-    A, A_T = C, C_T
-    C, C_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
-
-
-    mem_network = MemoryNetworkLayer((l_context_in, mnl_2, l_context_pe_in), vocab, embedding_size, 
-                    A=A, A_T=A_T, C=C, C_T=C_T,
-                    nonlinearity=lasagne.nonlinearities.softmax)
-    
-    l_pred = lasagne.layers.DenseLayer(mem_network, num_classes, W=lasagne.init.GlorotNormal(), 
-                                       b=None, nonlinearity=lasagne.nonlinearities.softmax)
-
-    
-    print "evaluating small memory network..."
-    output = lasagne.layers.helper.get_output(l_pred, {
-            l_context_in: np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen)),
-            l_context_pe_in: np.random.randn(batch_size, max_seqlen, max_sentlen, embedding_size),
-            l_B_embedding : np.random.randn(batch_size, 2*embedding_size)
-        }).eval()
-
-    print output
-    print output.shape
 
 if __name__ == '__main__':
 
