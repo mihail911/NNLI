@@ -283,8 +283,7 @@ class Model:
         self.word_to_idx = word_to_idx
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
-        self.build_simple_network()
-
+        self.build_simple_lstm()
         print "Network built"
     
     def build_glove_embedding(self, filepath, hidden_size):
@@ -378,6 +377,76 @@ class Model:
         }
 
         self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='ignore')
+        self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
+
+        zero_vec_tensor = T.vector()
+        self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
+        self.set_zero = theano.function([zero_vec_tensor], on_unused_input='ignore')
+
+        #self.nonlinearity = nonlinearity
+        self.network = l_pred
+
+    def build_simple_lstm(self):
+        """ 
+        Builds an LSTM encoder / decoder.
+        """
+        print "=" * 80 
+        print "BUILDING single-layer LSTM"
+        print "=" * 80
+
+        batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
+        self.hidden_size = 256
+        c = T.imatrix()
+        y = T.imatrix()
+
+        self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
+        self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
+
+        S_shared = theano.shared(self.S, borrow=True)
+        # Indexed in sentences
+        cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
+
+        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
+
+        L = self.build_glove_embedding(root_dir + "/data/glove/glove.6B.100d.txt", hidden_size=embedding_size)
+        print L
+        print "maxseqlen: ", max_seqlen * max_sentlen
+
+        embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab) + 1, embedding_size, W=L)
+        sum_embeddings = ScaleSumLayer(embedding, axis=2)
+        # Force embeddings to (batch_size, max_seqlen, embedding_size)
+        l_sequence = lasagne.layers.ReshapeLayer(sum_embeddings, shape=(batch_size, max_seqlen, embedding_size))
+        print "compiling lstm"
+        l_lstm = lasagne.layers.LSTMLayer(
+                l_sequence, self.hidden_size, 
+                grad_clipping=100, gradient_steps=-1, 
+                unroll_scan=True,
+                nonlinearity=T.tanh,
+                only_return_final=True)
+        print 'done compiling'
+        #l_forward = lasagne.layers.SliceLayer(l_lstm, -1, 1)
+
+        l_pred = lasagne.layers.DenseLayer(l_lstm, num_units=self.num_classes,
+                    nonlinearity=lasagne.nonlinearities.softmax)
+
+        probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc})
+            
+
+        pred = T.argmax(probas, axis=1)
+        cost = T.nnet.categorical_crossentropy(probas, y).mean() #+ reg_cost
+
+        params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
+        grads = T.grad(cost, params)
+
+        scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
+        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
+
+        givens = {
+            c: self.c_shared,
+            y: self.a_shared,
+        }
+
+        self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='warn')
         self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
 
         zero_vec_tensor = T.vector()
@@ -734,7 +803,7 @@ def main():
     parser.register('type', 'bool', str2bool)
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
     parser.add_argument('--embedding_size', type=int, default=20, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
