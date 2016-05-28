@@ -22,6 +22,7 @@ from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
 from util.utils import sick_reader
+import featurizer
 
 import warnings
 warnings.filterwarnings('ignore', '.*topo.*')
@@ -89,15 +90,14 @@ class ScaleSumLayer(SumLayer):
 
 class GramOverlapLayer():
 
-    def __init__(self, incoming, axis, **kwargs):
-        super(SumLayer, self).__init__(incoming, **kwargs)
-        self.axis = axis
-
+    def __init__(self, incoming, **kwargs):
+        super(GramOverlapLayer, self).__init__(incoming, **kwargs)
+        
     def get_output_shape_for(self, input_shape):
-        return input_shape[:self.axis] + input_shape[self.axis+1:]
+        return input_shape
 
     def get_output_for(self, input, **kwargs):
-        return T.mean(input, axis=self.axis)
+        return input
 
 
 
@@ -262,17 +262,39 @@ class Model:
 
         train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
         test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
-
-
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
+        featurizer.train_logreg(train_lines, train_labels, test_lines, test_labels)
+        quit()
+
+
+        # Ignore this for context building...
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
         S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels)
         S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
 
+        train_context = S[self.data['train']['C']]
+        test_context = S[self.data['test']['C']]
+        
+        fn = (lambda idx: idx_to_word[idx])
+        idx_to_word[0] = '<UNK>'
+        train_context_words = []
+        test_context_words = []
+
+        # for ex in train_context:
+        #     ph = ex.tolist() 
+        #     prem_hypo_words = map(fn, ph[0]), map(fn, ph[1])
+        #     train_context_words.append(prem_hypo_words)
+
+        # for ex in test_context:
+        #     ph = ex.tolist() 
+        #     prem_hypo_words = map(fn, ph[0]), map(fn, ph[1])
+        #     test_context_words.append(prem_hypo_words)
+
 
         lb = LabelBinarizer()
+
         lb.fit(train_labels + test_labels)
         
         self.batch_size = batch_size
@@ -296,7 +318,7 @@ class Model:
         self.word_to_idx = word_to_idx
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
-        self.build_simple_lstm()
+        self.build_simple_network()
         print "Network built"
     
     def build_glove_embedding(self, filepath, hidden_size):
@@ -328,65 +350,14 @@ class Model:
         c = T.imatrix()
         y = T.imatrix()
 
-        self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
+        self.c_shared = theano.shared(np.zeros((batch_size,), dtype=np.int32), borrow=True)
         self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
 
         S_shared = theano.shared(self.S, borrow=True)
         cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
 
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-       
-        l_feature_in = lasagne.layers.GramOverlapLayer()
-
-        sum_embeddings = ScaleSumLayer(embedding, axis=2)
         
-        reshape_sum = lasagne.layers.ReshapeLayer(sum_embeddings, shape=(batch_size, max_seqlen*embedding_size))
-        # Fully connected layers
-
-        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , W=lasagne.init.HeNormal(), 
-                                            nonlinearity=T.nnet.sigmoid)
-        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  W=lasagne.init.HeNormal(),
-                                            nonlinearity=T.nnet.sigmoid)
-        l_pred = lasagne.layers.DenseLayer(dense_2, self.num_classes, nonlinearity=lasagne.nonlinearities.softmax)
-
-        rand_in = np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen))
-        fake_probs = lasagne.layers.get_output(l_pred, {l_context_in : rand_in} ).eval()
-        print "fake_probs: ", fake_probs  
-
-        probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc})
-       # probas = T.clip(probas, 1e-7, 1.0-1e-7)
-
-        pred = T.argmax(probas, axis=1)
-
-        
-        # l2 regularization
-        reg_coeff = 1e-1
-        p_metric = l2
-        layer_dict = {dense_1: reg_coeff, dense_2 : reg_coeff, l_pred : reg_coeff}
-        reg_cost = reg_coeff * regularize_layer_params_weighted(layer_dict, p_metric)
-
-        cost = T.nnet.categorical_crossentropy(probas, y).mean() #+ reg_cost
-
-        params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
-        grads = T.grad(cost, params)
-
-        scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
-
-        givens = {
-            c: self.c_shared,
-            y: self.a_shared,
-        }
-
-        self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='ignore')
-        self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='ignore')
-
-        zero_vec_tensor = T.vector()
-        self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
-        self.set_zero = theano.function([zero_vec_tensor], on_unused_input='ignore')
-
-        #self.nonlinearity = nonlinearity
-        self.network = l_pred
 
         #quit()
     def build_simple_network(self):
@@ -398,7 +369,10 @@ class Model:
         - Reshape embedding into (batch_size, max_seqlen * embed_size)
         - 3 hidden layers with relu, hidden dim (512, 512, 256)
         """
+
         batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
+        print "SEQLEN: ", self.max_seqlen, max_seqlen
+
         self.hidden_size = 256
         c = T.imatrix()
         y = T.imatrix()
@@ -410,7 +384,7 @@ class Model:
         cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
 
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        
+        print "maxseqlen: ", max_seqlen
         #L = lasagne.init.HeNormal().sample( (len(vocab) + 1, embedding_size))
         # Do glove init
         L = self.build_glove_embedding(root_dir + "/data/glove/glove.6B.100d.txt", hidden_size=embedding_size)
@@ -803,22 +777,19 @@ class Model:
             padding = [0] * (max_sentlen - len(word_indices))
             # front padding for LSTM
             word_indices = padding + word_indices
-            print word_indices
-
+            
             S.append(word_indices)
             
-            C.append([i])
-            Q.append([i])
-            # Y.append(labels[i])
-            # if i % 2:
-            #     #indices = [i-j for j in np.arange(2, 22)]
+            if i % 2:
+                C.append([i, i-1])
+                Q.append([i, i-1])
+                #indices = [i-j for j in np.arange(2, 22)]
             #     # premise-hypothesis adding
-            #     C.append([i, i-1])
-            
+
             #     print "premise/hypothesis: ", lines[i], " ", lines[i-1], " ", i
             #     print len(lines)
                 # One label per every two examples
-         
+            
 
         return (np.array(S, dtype=np.int32), 
                np.array(C), np.array(Q, dtype=np.int32), 
@@ -856,10 +827,10 @@ def get_vocab(filenames, reader):
 
         for fname in filenames:
             for _, p, h in reader(fname):
-                max_sentlen = max(max_sentlen, len(p) + len(h)) 
-                line = p + h
-                for w in line:
-                    vocab.add(w)
+                for line in [p, h]:
+                    max_sentlen = max(max_sentlen, len(line))
+                    for w in line:
+                        vocab.add(w)
            
         word_to_idx = {} 
         for w in vocab:
@@ -882,8 +853,8 @@ def parse_SICK(filename, word_to_idx):
     """
     labels, sentences = [], []
     for l, premise, hypothesis in sick_reader(filename):
-        sentences.append(premise + hypothesis)
-        #sentences.append(hypothesis)
+        sentences.append(premise)
+        sentences.append(hypothesis)
         labels.append(l)
 
     # Overfit on smaller dataset
