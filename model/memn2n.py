@@ -264,34 +264,36 @@ class Model:
         test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
-        featurizer.train_logreg(train_lines, train_labels, test_lines, test_labels)
-        quit()
-
-
         # Ignore this for context building...
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
         S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels)
         S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
 
-        train_context = S[self.data['train']['C']]
-        test_context = S[self.data['test']['C']]
-        
+        train_context = S_train[self.data['train']['C']]
+        test_context = S_test[self.data['test']['C']]
+
+        print train_context.shape
+        print len(train_lines)
         fn = (lambda idx: idx_to_word[idx])
-        idx_to_word[0] = '<UNK>'
+        idx_to_word[0] = ''
         train_context_words = []
         test_context_words = []
 
-        # for ex in train_context:
-        #     ph = ex.tolist() 
-        #     prem_hypo_words = map(fn, ph[0]), map(fn, ph[1])
-        #     train_context_words.append(prem_hypo_words)
+        for i, ex in enumerate(train_context):
+            ph = ex.tolist() 
+            p_words, h_words = map(fn, ph[0]), map(fn, ph[1])
+            train_context_words.append([p_words, h_words])
 
-        # for ex in test_context:
-        #     ph = ex.tolist() 
-        #     prem_hypo_words = map(fn, ph[0]), map(fn, ph[1])
-        #     test_context_words.append(prem_hypo_words)
+        for i, ex in enumerate(test_context):
+            ph = ex.tolist() 
+            p_words, h_words = map(fn, ph[0]), map(fn, ph[1])
+            print " ".join(p_words) + " || " + " ".join(test_lines[2*i+1])
 
+            test_context_words.append([p_words, h_words])
+
+        featurizer.train_logreg(train_context_words, train_labels, test_context_words, test_labels)
+        quit()
 
         lb = LabelBinarizer()
 

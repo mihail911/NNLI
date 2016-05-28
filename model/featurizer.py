@@ -38,7 +38,8 @@ def gram_overlap(s1, s2, n = 2):
 
 
 def word_overlap_features(s1, s2):
-    overlap = [w1 for w1 in s1 if w1 in s2]
+
+    overlap = [w1 for w1 in s1 if w1 in s2 and w1 != '']
 
     feat = Counter(overlap)
     feat['overlap_length'] = len(overlap)
@@ -56,7 +57,7 @@ def train_logreg(X, y, test_X, test_y, load_vec=True):
 	lb = LabelBinarizer()
 	lb.fit(full_y)
 	# Convert into 1-D array
-
+	print len(X), len(test_X)
 	model = LogisticRegression()
 	big_X = X + test_X
 
@@ -88,10 +89,10 @@ def featurize(X):
 
 	n_train = len(X)
 	print n_train
-	for i in xrange(0, n_train, 2):
+	for i in xrange(n_train):
 		feat_dict = {}
-		s1 = X[i]
-		s2 = X[i + 1]
+		s1 = X[i][0]
+		s2 = X[i][1]
 		feat_dict.update(word_overlap_features(s1, s2))
 		feats.append(feat_dict)
 		    
