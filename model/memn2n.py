@@ -264,39 +264,15 @@ class Model:
         test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
-        # Ignore this for context building...
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen, test_labels)
-        S = np.concatenate([np.zeros((1, max_sentlen), dtype=np.int32), S_train, S_test], axis=0)
+        train_len = S_train.shape[0]
 
-        train_context = S_train[self.data['train']['C']]
-        test_context = S_test[self.data['test']['C']]
-
-        print train_context.shape
-        print len(train_lines)
-        fn = (lambda idx: idx_to_word[idx])
-        idx_to_word[0] = ''
-        train_context_words = []
-        test_context_words = []
-
-        for i, ex in enumerate(train_context):
-            ph = ex.tolist() 
-            p_words, h_words = map(fn, ph[0]), map(fn, ph[1])
-            train_context_words.append([p_words, h_words])
-
-        for i, ex in enumerate(test_context):
-            ph = ex.tolist() 
-            p_words, h_words = map(fn, ph[0]), map(fn, ph[1])
-            print " ".join(p_words) + " || " + " ".join(test_lines[2*i+1])
-
-            test_context_words.append([p_words, h_words])
-
-        featurizer.train_logreg(train_context_words, train_labels, test_context_words, test_labels)
-        quit()
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen,        
+                                                                                                      test_labels, offset=train_len)
+        S = np.concatenate([S_train, S_test], axis=0)
 
         lb = LabelBinarizer()
-
         lb.fit(train_labels + test_labels)
         
         self.batch_size = batch_size
@@ -320,7 +296,7 @@ class Model:
         self.word_to_idx = word_to_idx
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
-        self.build_simple_network()
+        self.build_simple_lstm()
         print "Network built"
     
     def build_glove_embedding(self, filepath, hidden_size):
@@ -369,12 +345,11 @@ class Model:
         - Wordwise embedding into (batch_size, max_seqlen, max_sentlen, embed_size) 
         - Sum all words in a sentence: (batch_size, max_seqlen, embed_size)
         - Reshape embedding into (batch_size, max_seqlen * embed_size)
-        - 3 hidden layers with relu, hidden dim (512, 512, 256)
+        - 3 hidden layers with sigmoid, hidden dim (512, 512, 256)
         """
 
         batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
-        print "SEQLEN: ", self.max_seqlen, max_seqlen
-
+       
         self.hidden_size = 256
         c = T.imatrix()
         y = T.imatrix()
@@ -386,13 +361,11 @@ class Model:
         cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
 
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        print "maxseqlen: ", max_seqlen
-        #L = lasagne.init.HeNormal().sample( (len(vocab) + 1, embedding_size))
-        # Do glove init
+
+
         L = self.build_glove_embedding(root_dir + "/data/glove/glove.6B.100d.txt", hidden_size=embedding_size)
         print L
-        print "maxseqlen: ", max_seqlen
-
+       
         embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab) + 1, embedding_size, W=L)
 
         sum_embeddings = ScaleSumLayer(embedding, axis=2)
@@ -400,22 +373,21 @@ class Model:
         reshape_sum = lasagne.layers.ReshapeLayer(sum_embeddings, shape=(batch_size, max_seqlen*embedding_size))
         # Fully connected layers
 
-        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , W=lasagne.init.HeNormal(), 
+        dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , W=lasagne.init.GlorotNormal(), 
                                             nonlinearity=T.nnet.sigmoid)
-        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  W=lasagne.init.HeNormal(),
+        dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  W=lasagne.init.GlorotNormal(),
                                             nonlinearity=T.nnet.sigmoid)
         l_pred = lasagne.layers.DenseLayer(dense_2, self.num_classes, nonlinearity=lasagne.nonlinearities.softmax)
 
         rand_in = np.random.randint(0, len(vocab) - 1, size=(batch_size, max_seqlen, max_sentlen))
+     
         fake_probs = lasagne.layers.get_output(l_pred, {l_context_in : rand_in} ).eval()
         print "fake_probs: ", fake_probs  
 
         probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc})
-       # probas = T.clip(probas, 1e-7, 1.0-1e-7)
-
+     
         pred = T.argmax(probas, axis=1)
-
-        
+   
         # l2 regularization
         reg_coeff = 1e-1
         p_metric = l2
@@ -468,9 +440,7 @@ class Model:
         l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
 
         L = self.build_glove_embedding(root_dir + "/data/glove/glove.6B.100d.txt", hidden_size=embedding_size)
-        print L
-        print "maxseqlen: ", max_seqlen * max_sentlen
-
+       
         embedding = lasagne.layers.EmbeddingLayer(l_context_in, len(vocab) + 1, embedding_size, W=L)
         sum_embeddings = ScaleSumLayer(embedding, axis=2)
         # Force embeddings to (batch_size, max_seqlen, embedding_size)
@@ -492,7 +462,7 @@ class Model:
             
 
         pred = T.argmax(probas, axis=1)
-        cost = T.nnet.categorical_crossentropy(probas, y).mean() #+ reg_cost
+        cost = T.nnet.categorical_crossentropy(probas, y).sum() #+ reg_cost
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
@@ -744,8 +714,6 @@ class Model:
             c[i, :len(row)] = row
 
         # q[:len(indices)] = dataset['Q'][indices]
-
-
         # Create the positional encoding
 
         # for key, mask in [('C', c_pe), ('Q', q_pe)]:
@@ -765,7 +733,7 @@ class Model:
         # self.c_pe_shared.set_value(c_pe)
         # self.q_pe_shared.set_value(q_pe)
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, labels):
+    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, offset=0):
         """ 
         TODO: pass in lines simply as a list of list of tokens, not a list of {text: ... , type: ...}
         knowing the premise, hypothesis ordering
@@ -783,8 +751,8 @@ class Model:
             S.append(word_indices)
             
             if i % 2:
-                C.append([i, i-1])
-                Q.append([i, i-1])
+                C.append([i + offset, i + offset -1])
+                Q.append([i + offset, i + offset -1])
                 #indices = [i-j for j in np.arange(2, 22)]
             #     # premise-hypothesis adding
 
@@ -842,7 +810,7 @@ def get_vocab(filenames, reader):
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 1 # premise-hypothesis pairs only
+        max_seqlen = 2 # premise-hypothesis pairs only
         return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
 
 
@@ -877,7 +845,7 @@ def main():
     parser.add_argument('--num_hops', type=int, default=3, help='Num hops')
     parser.add_argument('--adj_weight_tying', type='bool', default=True, help='Whether to use adjacent weight tying')
     parser.add_argument('--linear_start', type='bool', default=False, help='Whether to start with linear activations')
-    parser.add_argument('--shuffle_batch', type='bool', default=True, help='Whether to shuffle minibatches')
+    parser.add_argument('--shuffle_batch', type='bool', default=False, help='Whether to shuffle minibatches')
     parser.add_argument('--n_epochs', type=int, default=100, help='Num epochs')
     parser.add_argument('--l2_reg', type=float, default=0.01, help='l2 regularization')
     parser.add_argument('--query_len', type=int, default=2, help='max Length of network query' )
