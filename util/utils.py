@@ -89,6 +89,62 @@ def snli_dev_reader():
 def snli_test_reader():
     return sick_reader(src_filename=data_dir+"snli_1.0rc3_test.txt")
 
+def get_vocab(filenames, reader):
+        """ 
+        Inputs:
+        - filenames: a list of files to look through to form the vocabulary
+        - reader: a reader function that takes in the filename and emits a line-by-line tuple 
+          of (label, premise, hypothesis) for each ex.
+
+        Returns:
+        - vocab: A set of words present in the vocabulary
+        - word_to_idx: A bijective word -> idx mapping
+        - idx_to_word: A bijective idx -> word mapping
+        - max_seqlen: The maximum sequence length found in the dataSet
+            FIXME: Shouldn't return this here 
+        - max_sentlen: The length of the longest sentence in the dataset
+        """
+        vocab = set()
+        max_sentlen = 0
+
+        for fname in filenames:
+            for _, p, h in reader(fname):
+                for line in [p, h]:
+                    max_sentlen = max(max_sentlen, len(line))
+                    for w in line:
+                        vocab.add(w)
+           
+        word_to_idx = {} 
+        for w in vocab:
+            word_to_idx[w] = len(word_to_idx) + 1
+
+        idx_to_word = {}
+        for w, idx in word_to_idx.iteritems():
+            idx_to_word[idx] = w
+
+        max_seqlen = 2 # premise-hypothesis pairs only
+        return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
+
+
+def parse_SICK(filename, word_to_idx):
+    """ 
+    Parses the SICK dataset into consecutive premise-hypothesis
+    sentences.
+    - filename: the SICK file to parse
+    - word_to_idx: a comprehensive vocabulary mapping to use.
+    - 
+    """
+    labels, sentences = [], []
+    for l, premise, hypothesis in sick_reader(filename):
+        sentences.append(premise)
+        sentences.append(hypothesis)
+        labels.append(l)
+
+    # Overfit on smaller dataset
+    #return labels[:200], sentences[:400]
+    return labels, sentences
+
+
 
 def computeDataStatistics(dataSet="dev"):
     """
@@ -155,7 +211,31 @@ def computeDataStatistics(dataSet="dev"):
 
     return vocab, sentences, labels, minSenLengthPremise, maxSenLengthPremise,\
            minSenLengthHypothesis, maxSenLengthHypothesis
+    
+def build_glove_embedding(filepath, hidden_size, word_to_idx):
+    """ 
+    Builds a glove vector table for the embeddings from the given filename,
+    to the given hidden_size.  If the vectors file has a larger hidden size
+    than given, the vectors will be truncated; a hidden size larger than 
+    those in the file will be zero-padded.
 
+    The words vectors are mapped into the index dictionary given
+    by the third parameter, word_to_idx.
+    """
+
+    reader = csv.reader(file(filepath), delimiter=' ', quoting=csv.QUOTE_NONE)
+    colnames = None
+    print "building glove vectors..."
+
+    mat = 0.2*np.random.randn(len(word_to_idx) + 1, hidden_size)
+
+    for line in reader:        
+        if line[0] in word_to_idx: 
+            idx = word_to_idx[line[0]]
+            mat[idx, :] = np.array(map(float, line[1: ]))
+    
+    print "Done building vectors"
+    return mat
 
 def convertLabelsToMat(dataFile):
     """
