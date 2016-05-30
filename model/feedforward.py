@@ -41,11 +41,11 @@ class FeedForwardModel(NLIModel):
 		# Fully connected layers
 
 		dense_1 = lasagne.layers.DenseLayer(reshape_sum, self.hidden_size , 
-		                                    W=lasagne.init.GlorotNormal(), 
-		                                    nonlinearity=T.nnet.sigmoid)
+		                                    W=lasagne.init.GlorotUniform(), 
+		                                    nonlinearity=T.nnet.relu)
 		dense_2 = lasagne.layers.DenseLayer(dense_1, self.hidden_size,  
-		                                    W=lasagne.init.GlorotNormal(),
-		                                    nonlinearity=T.nnet.sigmoid)
+		                                    W=lasagne.init.GlorotUniform(),
+		                                    nonlinearity=T.nnet.relu)
 		l_pred = lasagne.layers.DenseLayer(dense_2, self.num_classes, 
 		                                    W=lasagne.init.GlorotNormal(),
 		                                    nonlinearity=lasagne.nonlinearities.softmax)
@@ -66,13 +66,13 @@ class FeedForwardModel(NLIModel):
 		layer_dict = {dense_1: reg_coeff, dense_2 : reg_coeff, l_pred : reg_coeff}
 		reg_cost = reg_coeff * regularize_layer_params_weighted(layer_dict, p_metric)
 
-		cost = T.nnet.categorical_crossentropy(probas, y).sum() + reg_cost
+		cost = T.nnet.categorical_crossentropy(probas, y).mean(axis=0).sum() #+ reg_cost
 
 		params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
 		grads = T.grad(cost, params)
 
 		scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-		updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
+		updates = self.la(scaled_grads, params, learning_rate=self.lr)
 
 		givens = {
 		    q: self.q_shared,

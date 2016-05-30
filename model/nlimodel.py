@@ -31,26 +31,39 @@ class NLIModel:
     Holds the infrastructure for training
     """
 
-    def __init__(self, train_file, test_file, batch_size=32, 
-                embedding_size=20, max_norm=40, lr=0.01, num_hops=1, 
-                adj_weight_tying=True, linear_start=True, **kwargs):
+    def __init__(self, train_file, test_file, batch_size, 
+                embedding_size=20, max_norm=100, lr=0.01, num_hops=3, 
+                adj_weight_tying=True, linear_start=False, **kwargs):
 
+        print batch_size
         self.root_dir = kwargs.get('root_dir')
+        la = kwargs.get('opt_alg')
+
+        if la == 'adam':
+            self.la = lasagne.updates.adam
+        elif la == 'rmsprop':
+            self.la = lasagne.updates.rmsprop
+        elif la == 'adadelta':
+            self.la = lasagne.updates.adadelta
+        elif la == 'adagrad':
+            self.la = lasagne.updates.adagrad
+    
+
         filenames = (self.root_dir + "/data/SICK/SICK_train_parsed.txt", 
                      self.root_dir + "/data/SICK/SICK_dev_parsed.txt", 
                      self.root_dir + "/data/SICK/SICK_test_parsed.txt")
         reader = sick_reader
-        vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen = get_vocab(filenames, reader)
+        vocab, word_to_idx, idx_to_word, max_sentlen = get_vocab(filenames, reader)
 
         train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
         test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'] = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'], max_seqlen = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
         train_len = S_train.shape[0]
 
-        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'] = self.process_dataset(test_lines, word_to_idx, max_sentlen,        
+        S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'], _ = self.process_dataset(test_lines, word_to_idx, max_sentlen,        
                                                                                                       test_labels, offset=train_len)
         S = np.concatenate([S_train, S_test], axis=0)
 
@@ -64,7 +77,7 @@ class NLIModel:
 
 
         self.max_sentlen = max_sentlen
-        self.embedding_size = 100
+        self.embedding_size = 20
         self.num_classes = 3 #len(vocab) + 1
         self.vocab = vocab
         self.adj_weight_tying = adj_weight_tying
@@ -80,117 +93,6 @@ class NLIModel:
 
         self.build_network()
         print "Network built"
-
-    def build_network(self, nonlinearity):
-        batch_size, max_seqlen, max_sentlen, embedding_size, vocab = self.batch_size, self.max_seqlen, self.max_sentlen, self.embedding_size, self.vocab
-
-        # index form of questions for bAbI
-        # {x_i}
-        c = T.imatrix()
-        # query
-        q = T.imatrix()
-        # label
-        y = T.imatrix()
-
-        # positional encoding of context/query
-        c_pe = T.tensor4()
-        q_pe = T.tensor4()
-
-        self.c_shared = theano.shared(np.zeros((batch_size, max_seqlen), dtype=np.int32), borrow=True)
-        # represents premise/hypothesis pair hence why axis 1 has value 2
-        self.q_shared = theano.shared(np.zeros((batch_size, self.query_len), dtype=np.int32), borrow=True)
-        self.a_shared = theano.shared(np.zeros((batch_size, self.num_classes), dtype=np.int32), borrow=True)
-        self.c_pe_shared = theano.shared(np.zeros((batch_size, max_seqlen, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
-        self.q_pe_shared = theano.shared(np.zeros((batch_size, self.query_len, max_sentlen, embedding_size), dtype=theano.config.floatX), borrow=True)
-        
-        # the repository of sentences to index into
-        S_shared = theano.shared(self.S, borrow=True)
-        
-        # Actual embeddings of contexts and queries
-        # hard-coded 2 to indicate premise/hypothesis pair
-        cc = S_shared[c.flatten()].reshape((batch_size, max_seqlen, max_sentlen))
-        qq = S_shared[q.flatten()].reshape((batch_size, self.query_len, max_sentlen))
-
-        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen))
-        l_question_in = lasagne.layers.InputLayer(shape=(batch_size, self.query_len, max_sentlen))
-
-        l_context_pe_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen, max_sentlen, embedding_size))
-        # premise/hypothesis pair
-        l_question_pe_in = lasagne.layers.InputLayer(shape=(batch_size, self.query_len, max_sentlen, embedding_size))
-
-        A, C = lasagne.init.GlorotNormal().sample((len(vocab)+1, embedding_size)), lasagne.init.GlorotNormal()
-        A_T, C_T, B_T = lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal(), lasagne.init.GlorotNormal()
-        W = A if self.adj_weight_tying else lasagne.init.GlorotNormal()
-
-        # premise/hypothesis pair
-        l_question_in = lasagne.layers.ReshapeLayer(l_question_in, shape=(batch_size * self.query_len * max_sentlen, ))
-        # Positional Embedding for b
-        l_B_embedding = lasagne.layers.EmbeddingLayer(l_question_in, len(vocab)+1, embedding_size, W=W)
-        B = l_B_embedding.W
-        # premise/hypothesis pair
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, self.query_len, max_sentlen, embedding_size))
-        l_B_embedding = lasagne.layers.ElemwiseMergeLayer((l_B_embedding, l_question_pe_in), merge_function=T.mul)
-
-        #l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, max_sentlen, embedding_size))
-        l_B_embedding = SumLayer(l_B_embedding, axis=2)
-        l_B_embedding = TemporalEncodingLayer(l_B_embedding, T=B_T)
-        self.B_T = l_B_embedding.T
-        l_B_embedding = lasagne.layers.ReshapeLayer(l_B_embedding, shape=(batch_size, self.query_len*embedding_size))
-
-        self.mem_layers = [MemoryNetworkLayer((l_context_in, l_B_embedding, l_context_pe_in), vocab, embedding_size, 
-                                             A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity, 
-                                             **{'query_len' : self.query_len})]
-        
-        for _ in range(1, self.num_hops):
-
-            if self.adj_weight_tying:
-                print "*** RUNNING IN WEIGHT_TIED MODE ***"
-                A, C = self.mem_layers[-1].C, lasagne.init.GlorotNormal()
-                A_T, C_T = self.mem_layers[-1].C_T, lasagne.init.GlorotNormal()
-            else:  # RNN style
-                print "*** RUNNING IN RNN MODE *** "
-                A, C = self.mem_layers[-1].A, self.mem_layers[-1].C
-                A_T, C_T = self.mem_layers[-1].A_T, self.mem_layers[-1].C_T
-
-            self.mem_layers += [MemoryNetworkLayer((l_context_in, self.mem_layers[-1], l_context_pe_in), vocab, embedding_size, 
-                                A=A, A_T=A_T, C=C, C_T=C_T, nonlinearity=nonlinearity, 
-                                **{'query_len' : self.query_len})]
-
-        # if self.adj_weight_tying:
-        #     l_pred = TransposedDenseLayer(self.mem_layers[-1], self.num_classes, W=self.mem_layers[-1].C, b=None, nonlinearity=lasagne.nonlinearities.softmax)
-        # else:
-        # must output to num_labels
-        l_pred = lasagne.layers.DenseLayer(self.mem_layers[-1], self.num_classes, W=lasagne.init.GlorotNormal(), b=None, nonlinearity=lasagne.nonlinearities.softmax)
-
-        probas = lasagne.layers.helper.get_output(l_pred, {l_context_in: cc, l_question_in: qq, l_context_pe_in: c_pe, l_question_pe_in: q_pe})
-        probas = T.clip(probas, 1e-7, 1.0-1e-7)
-
-        pred = T.argmax(probas, axis=1)
-
-        cost = T.nnet.categorical_crossentropy(probas, y).sum()
-
-        params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
-        grads = T.grad(cost, params)
-        scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
-
-        givens = {
-            c: self.c_shared,
-            q: self.q_shared,
-            y: self.a_shared,
-            c_pe: self.c_pe_shared,
-            q_pe: self.q_pe_shared
-        }
-
-        self.train_model = theano.function([], cost, givens=givens, updates=updates, on_unused_input='warn')
-        self.compute_pred = theano.function([], pred, givens=givens, on_unused_input='warn')
-
-        zero_vec_tensor = T.vector()
-        self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
-        self.set_zero = theano.function([zero_vec_tensor], updates=[(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [B]])
-
-        self.nonlinearity = nonlinearity
-        self.network = l_pred
 
     def reset_zero(self): 
         """
@@ -236,7 +138,7 @@ class NLIModel:
                 errors.append((i, self.lb.classes_[p]))
         return metrics.f1_score(y_true, y_pred, average='weighted', pos_label=None), errors
 
-    def train(self, n_epochs=100, shuffle_batch=False):
+    def train(self, n_epochs=100, shuffle_batch=True):
         ''' 
         Trains the network for n_epochs, with learning_rate annealing, and 
         verbose printing at each epoch.
@@ -340,6 +242,7 @@ class NLIModel:
         - C: A matrix of context sentences per problem.  Shape (len(labels), ??)
         - Q: A matrix of question sentences per problem.  Shape (len(labels), ??)
         - labels: Modified labels, if necessary.
+        - max_seqlen: The maximum sequence length in the dataset's context
         """
 
         S, C, Q, Y = [], [], [], []
@@ -355,9 +258,12 @@ class NLIModel:
                 C.append([i + offset, i + offset -1])
                 Q.append([i + offset, i + offset -1])
 
+        max_seqlen = 2
         return (np.array(S, dtype=np.int32), 
-               np.array(C), np.array(Q, dtype=np.int32), 
-               np.array(labels))
+               np.array(C), 
+               np.array(Q, dtype=np.int32), 
+               np.array(labels), 
+                max_seqlen)
 
 class MemoryNLIModel(NLIModel):
 
@@ -395,6 +301,7 @@ class MemoryNLIModel(NLIModel):
         for key, mask in [('C', c_pe), ('Q', q_pe)]:
             for i, row in enumerate(dataset[key][indices]):
                 sentences = self.S[row].reshape((-1, self.max_sentlen))
+                
                 for ii, word_idxs in enumerate(sentences):
                     J = np.count_nonzero(word_idxs)
                     for j in np.arange(J):
@@ -428,24 +335,26 @@ class MemoryNLIModel(NLIModel):
         - C: A matrix of context sentences per problem.  Shape (len(labels), ??)
         - Q: A matrix of question sentences per problem.  Shape (len(labels), ??)
         - labels: Modified labels, if necessary.
+        - max_seqlen: The length of the longest context
         """
 
         S, C, Q, Y = [], [], [], []
-
+        max_seqlen = 2
         for i, line in enumerate(lines):
             word_indices = [word_to_idx[w] for w in line]
             padding = [0] * (max_sentlen - len(word_indices))
             # front padding
-            word_indices = padding + word_indices
+            word_indices += padding
             
             S.append(word_indices)
             
             if i % 2: # Premise hypothesis pair
                 Q.append([i + offset, i + offset -1])
                 # Set context as the last 10 examples
-                indices = [i+offset-j for j in np.arange(2, 22)]
+                indices = [i+offset-j for j in np.arange(0, 2)]
+                max_seqlen = max(max_seqlen, len(indices))
                 C.append(indices)
 
         return (np.array(S, dtype=np.int32), 
                np.array(C), np.array(Q, dtype=np.int32), 
-               np.array(labels))
+               np.array(labels), max_seqlen)

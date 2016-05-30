@@ -100,8 +100,6 @@ def get_vocab(filenames, reader):
         - vocab: A set of words present in the vocabulary
         - word_to_idx: A bijective word -> idx mapping
         - idx_to_word: A bijective idx -> word mapping
-        - max_seqlen: The maximum sequence length found in the dataSet
-            FIXME: Shouldn't return this here 
         - max_sentlen: The length of the longest sentence in the dataset
         """
         vocab = set()
@@ -122,8 +120,7 @@ def get_vocab(filenames, reader):
         for w, idx in word_to_idx.iteritems():
             idx_to_word[idx] = w
 
-        max_seqlen = 2 # premise-hypothesis pairs only
-        return vocab, word_to_idx, idx_to_word, max_seqlen, max_sentlen
+        return vocab, word_to_idx, idx_to_word, max_sentlen
 
 
 def parse_SICK(filename, word_to_idx):
@@ -227,7 +224,7 @@ def build_glove_embedding(filepath, hidden_size, word_to_idx):
     colnames = None
     print "building glove vectors..."
 
-    mat = 0.2*np.random.randn(len(word_to_idx) + 1, hidden_size)
+    mat = 0.05*np.random.randn(len(word_to_idx) + 1, hidden_size)
 
     for line in reader:        
         if line[0] in word_to_idx: 
