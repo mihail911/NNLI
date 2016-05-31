@@ -17,7 +17,7 @@ root_dir = os.path.dirname(os.path.dirname(__file__))
 sys.path.append(root_dir)
 
 sick_dir = "../data/SICK/"
-data_dir = "../data/snli/"
+data_dir = "../data/SNLI/"
 
 WORD_RE = re.compile(r"([^ \(\)]+)", re.UNICODE)
 
@@ -71,11 +71,15 @@ def sick_train_dev_reader():
 
 
 def snli_reader(src_filename):
+    count = 1
     for example in csv.reader(file(src_filename), delimiter="\t"):
+        if count == 1:
+            count += 1
+            continue
         label, t1, t2 = example[:3]
         if not label.startswith('%'): # Some files use leading % for comments.
-            yield (label, str2tree(t1), str2tree(t2))
-
+            yield (label, leaves(str2tree(t1)), leaves(str2tree(t2)))
+        count += 1
 
 #Readers for processing SICK datasets
 def snli_train_reader():
@@ -133,6 +137,26 @@ def parse_SICK(filename, word_to_idx):
     """
     labels, sentences = [], []
     for l, premise, hypothesis in sick_reader(filename):
+        sentences.append(premise)
+        sentences.append(hypothesis)
+        labels.append(l)
+
+    # Overfit on smaller dataset
+    #return labels[:200], sentences[:400]
+    return labels, sentences
+
+
+def parse_SNLI(filename, word_to_idx):
+    """
+    Parses the SICK dataset into consecutive premise-hypothesis
+    sentences.
+    - filename: the SICK file to parse
+    - word_to_idx: a comprehensive vocabulary mapping to use.
+    -
+    """
+    labels, sentences = [], []
+    for l, premise, hypothesis in snli_reader(filename):
+        if l == "-": continue
         sentences.append(premise)
         sentences.append(hypothesis)
         labels.append(l)

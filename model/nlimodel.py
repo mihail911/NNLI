@@ -9,15 +9,17 @@ import lasagne
 from lasagne.regularization import regularize_layer_params_weighted, l2, l1, regularize_network_params
 import nltk
 import numpy as np
-
+import random
 import theano
 import theano.tensor as T
 import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
-from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK
+<<<<<<< HEAD
+from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK, snli_reader, parse_SNLI
 from util.stats import Stats
+
 from customlayers import *
 import featurizer
 
@@ -35,7 +37,7 @@ class NLIModel:
     def __init__(self, train_file, test_file, batch_size, 
                 embedding_size=20, max_norm=100, lr=0.01, num_hops=3, 
                 adj_weight_tying=True, linear_start=False, 
-                exp_name='nlirun', **kwargs):
+                exp_name='nlirun', context_size=2, **kwargs):
 
         self.stats = Stats(exp_name)
         self.root_dir = kwargs.get('root_dir')
@@ -51,27 +53,32 @@ class NLIModel:
             self.la = lasagne.updates.adagrad
     
 
-        filenames = (self.root_dir + "/data/SICK/SICK_train_parsed.txt", 
-                     self.root_dir + "/data/SICK/SICK_dev_parsed.txt", 
-                     self.root_dir + "/data/SICK/SICK_test_parsed.txt")
-        reader = sick_reader
+        filenames = (#self.root_dir + "/data/SNLI/snli_1.0rc3_train.txt",
+                     #self.root_dir + "/data/SICK/snli_1.0rc3_dev.txt",
+                     #self.root_dir + "/data/SICK/SICK_test_parsed.txt")
+                    self.root_dir + "/data/SICK/SICK_train_parsed.txt",
+                    self.root_dir + "/data/SICK/SICK_dev_parsed.txt",
+                    self.root_dir + "/data/SICK/SICK_test_parsed.txt"
+                    )
+        reader = sick_reader # sick_reader
         vocab, word_to_idx, idx_to_word, max_sentlen = get_vocab(filenames, reader)
 
-        train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
-        test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
+        train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)# parse_SICK(filenames[0], word_to_idx)
+        test_labels, test_lines = parse_SICK(filenames[1], word_to_idx) # parse_SICK(filenames[1], word_to_idx)
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
         self.data = {'train': {}, 'test': {}}
-        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'], max_seqlen = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels)
+        S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'], max_seqlen = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels, context_size)
         train_len = S_train.shape[0]
 
         S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'], _ = self.process_dataset(test_lines, word_to_idx, max_sentlen,        
-                                                                                                      test_labels, offset=train_len)
+                                                                                                      test_labels, context_size, offset=train_len)
         S = np.concatenate([S_train, S_test], axis=0)
 
         lb = LabelBinarizer()
         lb.fit(train_labels + test_labels)
-        
+
+        print "LB Classes: ", lb.classes_
         self.batch_size = batch_size
         self.max_seqlen = max_seqlen
         print "-" * 80
@@ -79,7 +86,8 @@ class NLIModel:
 
 
         self.max_sentlen = max_sentlen
-        self.embedding_size = 20
+        self.embedding_size = embedding_size
+        self.context_size = context_size
         self.num_classes = 3 #len(vocab) + 1
         self.vocab = vocab
         self.adj_weight_tying = adj_weight_tying
@@ -174,8 +182,17 @@ class NLIModel:
             print 'epoch:', epoch, 'cost:', (total_cost / len(indices)), ' took: %d(s)' % (end_time - start_time)
             self.stats.recordCost(epoch, (total_cost / len(indices)))
 
+            # Subsample train set for computation of accuracy -- pick 1000 random indices
+            num_train = len(self.data['train']['Y'])
+            subsample_idx = random.sample(np.arange(num_train), 1000)
+            subsample_dict = {}
+            for key, value in self.data['train'].iteritems():
+                subsample_dict[key] = value[subsample_idx]
+
+
+            ########
             print 'TRAIN', '=' * 40
-            train_f1, train_errors = self.compute_f1(self.data['train'])    
+            train_f1, train_errors = self.compute_f1(subsample_dict)
             self.stats.recordAcc(epoch, train_f1, dataset="train")
 
             print 'TRAIN_ERROR:', (1-train_f1)*100
@@ -239,7 +256,7 @@ class NLIModel:
         self.q_shared.set_value(q)
         self.a_shared.set_value(y)
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, offset=0):
+    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, context_size, offset=0):
         """ 
         Processes the dataset to emit context, query, and answer vectors
         for an NLIModel.
@@ -332,7 +349,7 @@ class MemoryNLIModel(NLIModel):
         self.c_pe_shared.set_value(c_pe)
         self.q_pe_shared.set_value(q_pe)
 
-    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, offset=0):
+    def process_dataset(self, lines, word_to_idx, max_sentlen, labels, context_size, offset=0):
         """ 
         Processes the dataset to emit context, query, and answer vectors
         for an NLIModel.
@@ -367,7 +384,7 @@ class MemoryNLIModel(NLIModel):
             if i % 2: # Premise hypothesis pair
                 Q.append([i + offset, i + offset -1])
                 # Set context as the last 10 examples
-                indices = [i+offset-j for j in np.arange(0, 2)]
+                indices = [i+offset-j for j in np.arange(0, context_size)] # Context size
                 max_seqlen = max(max_seqlen, len(indices))
                 C.append(indices)
 
