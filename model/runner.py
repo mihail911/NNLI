@@ -35,13 +35,13 @@ def main():
     parser.add_argument('--adj_weight_tying', type='bool', default=True, help='Whether to use adjacent weight tying')
     parser.add_argument('--linear_start', type='bool', default=True, help='Whether to start with linear activations')
     parser.add_argument('--shuffle_batch', type='bool', default=True, help='Whether to shuffle minibatches')
-    parser.add_argument('--n_epochs', type=int, default=100, help='Num epochs')
+    parser.add_argument('--n_epochs', type=int, default=25, help='Num epochs')
     parser.add_argument('--l2_reg', type=float, default=0.01, help='l2 regularization')
     parser.add_argument('--query_len', type=int, default=2, help='max Length of network query' )
     parser.add_argument('--root_dir', type=str, default=_root_dir, help='root directory of project')
     parser.add_argument('--model', type=str, default='mn', help='Which model to use (mn, ff, lstm)')
     parser.add_argument('--context_size', type=int, default=10, help='size of context window')
-
+    parser.add_argument('--exp_name', type=str, default='nlimodelzz', help='Logger file to use')
     args = parser.parse_args()
     print '*' * 80
     print 'args:', args
