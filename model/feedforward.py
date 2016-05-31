@@ -3,7 +3,7 @@ from nlimodel import *
 class FeedForwardModel(NLIModel):
 
 	# @Override
-	def build_network(self):
+	def build_network(self, nonlinearity=None):
 		"""
 		Builds a very simple feedforward network to assess the effectiveness of training on the task.
 		- Input: (batch_size, max_seqlen, max_sentlen)

@@ -17,6 +17,7 @@ from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
 from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK
+from util.stats import Stats
 from customlayers import *
 import featurizer
 
@@ -33,9 +34,10 @@ class NLIModel:
 
     def __init__(self, train_file, test_file, batch_size, 
                 embedding_size=20, max_norm=100, lr=0.01, num_hops=3, 
-                adj_weight_tying=True, linear_start=False, **kwargs):
+                adj_weight_tying=True, linear_start=False, 
+                exp_name='nlirun', **kwargs):
 
-        print batch_size
+        self.stats = Stats(exp_name)
         self.root_dir = kwargs.get('root_dir')
         la = kwargs.get('opt_alg')
 
@@ -138,7 +140,7 @@ class NLIModel:
                 errors.append((i, self.lb.classes_[p]))
         return metrics.f1_score(y_true, y_pred, average='weighted', pos_label=None), errors
 
-    def train(self, n_epochs=100, shuffle_batch=True):
+    def train(self, n_epochs=50, shuffle_batch=True):
         ''' 
         Trains the network for n_epochs, with learning_rate annealing, and 
         verbose printing at each epoch.
@@ -146,13 +148,16 @@ class NLIModel:
         epoch = 0
         n_train_batches = len(self.data['train']['Y']) // self.batch_size
         self.lr = self.init_lr
-        prev_train_f1 = None
+        prev_train_f1, prev_test_f1 = None, None
+
 
         while (epoch < n_epochs):
             epoch += 1
+            # Get the weights from last iter
+            last_weights = lasagne.layers.helper.get_all_param_values(self.network)
 
-            if epoch % 25 == 0:
-                self.lr /= 2.0
+            # if epoch % 10 == 0:
+            #     self.lr /= 2.0
 
             indices = range(n_train_batches)
             if shuffle_batch:
@@ -167,9 +172,12 @@ class NLIModel:
             end_time = time.time()
             print '\n' * 3, '*' * 80
             print 'epoch:', epoch, 'cost:', (total_cost / len(indices)), ' took: %d(s)' % (end_time - start_time)
+            self.stats.recordCost(epoch, (total_cost / len(indices)))
 
             print 'TRAIN', '=' * 40
-            train_f1, train_errors = self.compute_f1(self.data['train'])
+            train_f1, train_errors = self.compute_f1(self.data['train'])    
+            self.stats.recordAcc(epoch, train_f1, dataset="train")
+
             print 'TRAIN_ERROR:', (1-train_f1)*100
             if False:
                 for i, pred in train_errors[:10]:
@@ -180,15 +188,23 @@ class NLIModel:
                     print '---' * 20
 
             if prev_train_f1 is not None and train_f1 < prev_train_f1 and self.nonlinearity is None:
+                # Add nonlinearity back in
                 prev_weights = lasagne.layers.helper.get_all_param_values(self.network)
+                self.nonlinearity = lasagne.nonlinearities.softmax
                 self.build_network(nonlinearity=lasagne.nonlinearities.softmax)
                 lasagne.layers.helper.set_all_param_values(self.network, prev_weights)
             else:
                 print 'TEST', '=' * 40
                 test_f1, test_errors = self.compute_f1(self.data['test'])
+                self.stats.recordAcc(epoch, test_f1, dataset="dev")
                 print '*** TEST_ERROR:', (1-test_f1)*100
-
-            prev_train_f1 = train_f1
+                if prev_test_f1 is not None and (test_f1+0.03) < prev_test_f1:
+                    print "REVERTING to last iteration's weights"
+                    lasagne.layers.helper.set_all_param_values(self.network, last_weights)
+                    self.lr /= 2.0
+                else: 
+                    prev_test_f1 = test_f1
+        self.stats.recordFinalStats(n_epochs, prev_train_f1, prev_test_f1)
 
     def to_words(self, indices):
         sents = []

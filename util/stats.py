@@ -74,8 +74,18 @@ class Stats(object):
 
 
 
-    def plotAndSaveFig(self, fileName, title, xLabel, yLabel, xCoord, yCoord):
+    def plotAndSaveFig(self, fileName, title, xLabel, yLabel, xCoord, yCoord): 
         plt.plot(xCoord, yCoord)
+        plt.xlabel(xLabel)
+        plt.ylabel(yLabel)
+        plt.title(title)
+        plt.savefig(fileName)
+        plt.clf()
+
+
+    def plotAndSaveFigs(self, fileName, title, xLabel, yLabel, coordList):
+        for x, y in coordList:
+            plt.plot(x, y)
         plt.xlabel(xLabel)
         plt.ylabel(yLabel)
         plt.title(title)
@@ -128,18 +138,17 @@ class Stats(object):
         devEx = self.getExNum(dataList="dev")
         devAcc = self.getAcc(dataList="dev")
 
-        self.plotAndSaveFig(self.expName+"_cost.png", "Cost vs. Num Examples", "Num Examples",
+        self.plotAndSaveFig(self.expName+"_cost.png", "Cost vs. Num Epochs", "Num Epochs",
                      "Cost", numEx, cost)
 
-        self.plotAndSaveFig(self.expName+"_trainAcc.png", "Train Accuracy vs. Num Examples", "Num Examples",
-                     "Accuracy", trainEx, trainAcc)
-
-        self.plotAndSaveFig(self.expName+"_devAcc.png", "Dev Accuracy vs. Num Examples", "Num Examples",
+        self.plotAndSaveFigs(self.expName+"_trainDevAcc.png", "Train / Dev F1 vs. Num Epochs", "Num Epochs",
+                     "Accuracy", [(trainEx, trainAcc), (devEx, devAcc)])
+        '''
+        self.plotAndSaveFig(self.expName+"_devAcc.png", "Dev F1 vs. Num Epochs", "Num Epochs",
                      "Accuracy", devEx, devAcc)
-
+        '''
         self.logger.Log("Training complete! "
-                        "Total training time: {0} ".format(time.time() -
-                                                    self.startTime)/SEC_HOUR)
+                        "Total training time: {0} ".format((time.time() -self.startTime)/SEC_HOUR))
 
 
         self.reset()

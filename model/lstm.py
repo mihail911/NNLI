@@ -41,7 +41,7 @@ class LSTMModel(NLIModel):
 		        grad_clipping=100, gradient_steps=-1, 
 		        unroll_scan=True,
 		        nonlinearity=T.tanh,
-		        only_return_final=True)
+		        only_return_final=False)
 		print 'done compiling'
 		#l_forward = lasagne.layers.SliceLayer(l_lstm, -1, 1)
 

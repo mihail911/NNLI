@@ -89,12 +89,12 @@ class MemoryNetworkModel(MemoryNLIModel):
 
         pred = T.argmax(probas, axis=1)
 
-        cost = T.nnet.categorical_crossentropy(probas, y).sum()
+        cost = T.nnet.categorical_crossentropy(probas, y).mean(axis=0).sum()
 
         params = lasagne.layers.helper.get_all_params(l_pred, trainable=True)
         grads = T.grad(cost, params)
         scaled_grads = lasagne.updates.total_norm_constraint(grads, self.max_norm)
-        updates = lasagne.updates.adam(scaled_grads, params, learning_rate=self.lr)
+        updates = self.la(grads, params)
 
         givens = {
             c: self.c_shared,
@@ -109,7 +109,9 @@ class MemoryNetworkModel(MemoryNLIModel):
 
         zero_vec_tensor = T.vector()
         self.zero_vec = np.zeros(embedding_size, dtype=theano.config.floatX)
-        self.set_zero = theano.function([zero_vec_tensor], updates=[(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [B]])
+        self.set_zero = theano.function([zero_vec_tensor], 
+                                        updates=[(x, T.set_subtensor(x[0, :], zero_vec_tensor)) for x in [B]])
 
         self.nonlinearity = nonlinearity
         self.network = l_pred
+
