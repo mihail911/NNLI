@@ -10,6 +10,7 @@ from nlimodel import NLIModel
 from feedforward import FeedForwardModel
 from lstm import LSTMModel
 from memn2n import MemoryNetworkModel
+from pairlstm import PairLSTMModel
 
 def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1')
@@ -18,7 +19,8 @@ def str2bool(v):
 _model_dict = {
 	'mn'   : lambda args: MemoryNetworkModel(**args.__dict__), 
 	'ff'   : lambda args: FeedForwardModel(**args.__dict__),
-	'lstm' : lambda args: LSTMModel(**args.__dict__)
+	'lstm' : lambda args: LSTMModel(**args.__dict__),
+    'pairlstm' : lambda args: PairLSTMModel(**args.__dict__)
 			}
 
 def main():
@@ -39,9 +41,9 @@ def main():
     parser.add_argument('--l2_reg', type=float, default=0.01, help='l2 regularization')
     parser.add_argument('--query_len', type=int, default=2, help='max Length of network query' )
     parser.add_argument('--root_dir', type=str, default=_root_dir, help='root directory of project')
-    parser.add_argument('--model', type=str, default='mn', help='Which model to use (mn, ff, lstm)')
+    parser.add_argument('--model', type=str, default='pairlstm', help='Which model to use (mn, ff, lstm)')
     parser.add_argument('--context_size', type=int, default=10, help='size of context window')
-    parser.add_argument('--exp_name', type=str, default='nlimodelzz', help='Logger file to use')
+    parser.add_argument('--exp_name', type=str, default='nlimodelzz2', help='Logger file to use')
     args = parser.parse_args()
     print '*' * 80
     print 'args:', args

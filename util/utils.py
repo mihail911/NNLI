@@ -248,7 +248,7 @@ def build_glove_embedding(filepath, hidden_size, word_to_idx):
     colnames = None
     print "building glove vectors..."
 
-    mat = 0.05*np.random.randn(len(word_to_idx) + 1, hidden_size)
+    mat = 0.05*np.random.randn(len(word_to_idx) + 1, hidden_size).astype(np.float32)
 
     for line in reader:        
         if line[0] in word_to_idx: 
