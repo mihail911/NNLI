@@ -4,8 +4,11 @@ import argparse
 import cPickle as pickle
 import glob
 import sys
-import csv
 sys.path.append("/Users/mihaileric/Documents/Research/Lasagne")
+# work around so Python doesn't break with max recursion depth error
+sys.setrecursionlimit(50000)
+import csv
+
 import lasagne
 from lasagne.regularization import regularize_layer_params_weighted, l2, l1, regularize_network_params
 import nltk
@@ -37,8 +40,9 @@ class NLIModel:
     def __init__(self, train_file, test_file, batch_size, 
                 embedding_size=20, max_norm=100, lr=0.01, num_hops=3, 
                 adj_weight_tying=True, linear_start=False, 
-                exp_name='nlirun', context_size=2, **kwargs):
+                exp_name='nlirun', dataset='sick', context_size=2, **kwargs):
 
+        self.exp_name = exp_name
         self.stats = Stats(exp_name)
         self.root_dir = kwargs.get('root_dir')
         la = kwargs.get('opt_alg')
@@ -53,18 +57,33 @@ class NLIModel:
             self.la = lasagne.updates.adagrad
     
 
-        filenames = (#self.root_dir + "/data/SNLI/snli_1.0rc3_train.txt",
-                     #self.root_dir + "/data/SICK/snli_1.0rc3_dev.txt",
-                     #self.root_dir + "/data/SICK/SICK_test_parsed.txt")
+        snli_filenames = (self.root_dir + "/data/SNLI/snli_1.0rc3_train.txt",
+                     self.root_dir + "/data/SNLI/snli_1.0rc3_dev.txt")
+        sick_filenames = (
                     self.root_dir + "/data/SICK/SICK_train_parsed.txt",
                     self.root_dir + "/data/SICK/SICK_dev_parsed.txt",
                     self.root_dir + "/data/SICK/SICK_test_parsed.txt"
                     )
-        reader = sick_reader # sick_reader
+        print "Dataset being used: ", dataset
+
+        if dataset == 'sick':
+            reader = sick_reader # sick_reader
+            filenames = sick_filenames
+        elif dataset == 'snli':
+            reader = snli_reader
+            filenames = snli_filenames
+
         vocab, word_to_idx, idx_to_word, max_sentlen = get_vocab(filenames, reader)
 
-        train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)# parse_SICK(filenames[0], word_to_idx)
-        test_labels, test_lines = parse_SICK(filenames[1], word_to_idx) # parse_SICK(filenames[1], word_to_idx)
+        if dataset == 'sick':
+            train_labels, train_lines = parse_SICK(filenames[0], word_to_idx)
+            test_labels, test_lines = parse_SICK(filenames[1], word_to_idx)
+        elif dataset == 'snli':
+            train_labels, train_lines = parse_SNLI(filenames[0], word_to_idx)
+            test_labels, test_lines = parse_SNLI(filenames[1], word_to_idx)
+
+
+        print "after dataset parsing..."
         lines = np.concatenate([train_lines, test_lines], axis=0)
 
         self.data = {'train': {}, 'test': {}}

@@ -43,7 +43,8 @@ def main():
     parser.add_argument('--root_dir', type=str, default=_root_dir, help='root directory of project')
     parser.add_argument('--model', type=str, default='pairlstm', help='Which model to use (mn, ff, lstm)')
     parser.add_argument('--context_size', type=int, default=10, help='size of context window')
-    parser.add_argument('--exp_name', type=str, default='nlimodelzz2', help='Logger file to use')
+    parser.add_argument('--exp_name', type=str, default='snli_run', help='Logger file to use')
+    parser.add_argument('--dataset', type=str, default='snli', help='which of sick or snli to use for experiment')
     args = parser.parse_args()
     print '*' * 80
     print 'args:', args
