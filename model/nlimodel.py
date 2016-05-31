@@ -16,7 +16,6 @@ import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
-<<<<<<< HEAD
 from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK, snli_reader, parse_SNLI
 from util.stats import Stats
 

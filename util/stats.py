@@ -49,7 +49,7 @@ class Stats(object):
 
     def recordAcc(self, numEx, acc, dataset="train"):
         self.acc[dataset].append((numEx, acc))
-        self.logger.Log("Current " + dataset + " accuracy after {0} examples:"
+        self.logger.Log("Current " + dataset + " accuracy after {0} epochs:"
                                                " {1}".format(numEx, acc))
         if dataset == "train":
             ex = self.getExNum(dataList=dataset)
@@ -60,7 +60,7 @@ class Stats(object):
         # TODO: Support "test" computation as well
 
         self.plotAndSaveFig(self.expName+"_"+dataset+"Acc.png", dataset +
-                            "Accuracy vs. Num Examples", "Num Examples", dataset +
+                            "Accuracy vs. Num Epochs", "Num Epochs", dataset +
                             " Accuracy", ex, acc)
 
 
@@ -69,7 +69,7 @@ class Stats(object):
         self.logger.Log("Current cost: {0}".format(cost))
         numEx = self.getExNum(dataList="cost")
         cost = self.getCost()
-        self.plotAndSaveFig(self.expName+"_cost.png", "Cost vs. Num Examples", "Num Examples",
+        self.plotAndSaveFig(self.expName+"_cost.png", "Cost vs. Num Epochs", "Num Epochs",
                      "Cost", numEx, cost)
 
 
@@ -120,8 +120,8 @@ class Stats(object):
         self.totalNumEx = numEx
         self.acc["train"].append((numEx, trainAcc))
         self.acc["dev"].append((numEx, devAcc))
-        self.logger.Log("Final training accuracy after {0} examples: {1}".format(numEx, trainAcc))
-        self.logger.Log("Final validation accuracy after {0} examples: {1}".format(numEx, devAcc))
+        self.logger.Log("Final training accuracy after {0} epochs: {1}".format(numEx, trainAcc))
+        self.logger.Log("Final validation accuracy after {0} epochs: {1}".format(numEx, devAcc))
 
         # Pickle accuracy and cost
         with open(self.expName+".pickle", "w") as f:
