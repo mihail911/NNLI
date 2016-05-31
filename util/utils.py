@@ -253,7 +253,7 @@ def build_glove_embedding(filepath, hidden_size, word_to_idx):
     for line in reader:        
         if line[0] in word_to_idx: 
             idx = word_to_idx[line[0]]
-            mat[idx, :] = np.array(map(float, line[1: ]))
+            mat[idx, :] = np.array(map(float, line[1: ])).astype(np.float32)
     
     print "Done building vectors"
     return mat

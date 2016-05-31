@@ -1,6 +1,7 @@
 from __future__ import division
 import os
 import argparse
+import cPickle as pickle
 import glob
 import sys
 import csv
@@ -214,12 +215,17 @@ class NLIModel:
                 test_f1, test_errors = self.compute_f1(self.data['test'])
                 self.stats.recordAcc(epoch, test_f1, dataset="dev")
                 print '*** TEST_ERROR:', (1-test_f1)*100
-                if prev_test_f1 is not None and (test_f1+0.03) < prev_test_f1:
-                    print "REVERTING to last iteration's weights"
-                    lasagne.layers.helper.set_all_param_values(self.network, last_weights)
-                    self.lr /= 2.0
-                else: 
-                    prev_test_f1 = test_f1
+                # if prev_test_f1 is not None and (test_f1+0.03) < prev_test_f1:
+                #     print "REVERTING to last iteration's weights"
+                #     lasagne.layers.helper.set_all_param_values(self.network, last_weights)
+                #     self.lr /= 2.0
+                # else:
+                #     pass
+                #     #prev_test_f1 = test_f1
+
+            self.save_model("pair_lstm_run1.wts")
+
+
         self.stats.recordFinalStats(n_epochs, prev_train_f1, prev_test_f1)
 
     def to_words(self, indices):
@@ -296,6 +302,21 @@ class NLIModel:
                np.array(Q, dtype=np.int32), 
                np.array(labels), 
                 max_seqlen)
+
+
+    def save_model(self, file_name):
+        all_param_values = lasagne.layers.get_all_param_values(self.network)
+        #all_param_values = [p.get_value() for p in all_params]
+        with open(file_name, "w+") as f:
+            pickle.dump(all_param_values, f)
+
+
+    def load_model(self, file_name):
+        with open(file_name, "r") as f:
+            params = pickle.load(f)
+
+        lasagne.layers.set_all_param_values(self.network, params)
+
 
 class MemoryNLIModel(NLIModel):
 

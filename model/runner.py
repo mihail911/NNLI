@@ -28,7 +28,7 @@ def main():
     parser.register('type', 'bool', str2bool)
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
-    parser.add_argument('--batch_size', type=int, default=10, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=100, help='Batch size')
     parser.add_argument('--embedding_size', type=int, default=50, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
