@@ -53,7 +53,10 @@ def main():
     model_type = args.__dict__['model']
     print "Model type: ", model_type
     model = _model_dict[model_type](args)
-    model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
+    #model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
+    print "Outputting sentence embeddings"
+    model.output_sent_embeddings()
+
 
 if __name__ == '__main__':
  	main()

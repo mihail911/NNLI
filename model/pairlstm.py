@@ -73,6 +73,7 @@ class PairLSTMModel(NLIModel):
 		                                    nonlinearity=lasagne.nonlinearities.softmax)
 
 
+		self.l_concat = l_concat
 
 		probas = lasagne.layers.helper.get_output(l_pred, {l_question_in: qq})
 
@@ -107,4 +108,9 @@ class PairLSTMModel(NLIModel):
 
 		print "set zero compiled"
 		self.network = l_pred
+
+		concat_output = lasagne.layers.helper.get_output(self.l_concat, {l_question_in: qq})
+		self.lstm_layer_output = theano.function([], concat_output, givens=givens, on_unused_input='warn')
+
+		print "Done compiling lstm layer function"
 

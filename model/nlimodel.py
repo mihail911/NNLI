@@ -337,6 +337,26 @@ class NLIModel:
         lasagne.layers.set_all_param_values(self.network, params)
 
 
+
+    def output_sent_embeddings(self):
+        self.load_model('pair_lstm_run1.wts')
+        n_train_batches = len(self.data['train']['Y']) // self.batch_size
+        store_dict = {}
+        store_dict['batch_size'] = self.batch_size
+
+        with open('lstm_layer_sentence_embeddings', 'w') as f:
+            pickle.dump(store_dict['batch_size'], f)
+
+            for minibatch_index in range(n_train_batches):
+                print "batch {0}".format(minibatch_index)
+                self.set_shared_variables(self.data['train'], minibatch_index)
+                lstm_layer_output = self.lstm_layer_output()
+                pickle.dump(lstm_layer_output, f)
+
+
+            print "Stored layer embeddings"
+
+
 class MemoryNLIModel(NLIModel):
 
     """
