@@ -151,6 +151,33 @@ class PositionalEncodingLayer(lasagne.layers.MergeLayer):
 
 
 
+class SentenceEmbeddingLayer(lasagne.layers.MergeLayer):
+    """
+    Computes a sentence embedding on the fly using an LSTM. 
+
+    Inputs:
+    - incomings: 
+      [0]: a tensor of (batch_size, max_seq_len) indicating
+           sentence indices
+      [1]: a sentence embedding layer that can take (batch_size, max_seq_len)
+           to a sentence embedding of size (batch_size, max_seq_len, embedding_size)
+           
+           For example, this could be a pre-trained portion of a pair LSTM model.
+
+   A_sent: A shared sentence-embedding tensor size (|S|, embedding_size)
+
+    """
+
+    def __init__(self, incomings, A_sent, **kwargs):
+        super(SentenceEmbeddingLayer, self).__init__(incoming)
+
+        if len(incomings != 2):
+            raise NotImplementedError
+        pass
+
+
+
+
 class MemoryNetworkLayer(lasagne.layers.MergeLayer):
     """
     Computes a single memory network 'hop' as given in the paper
@@ -193,7 +220,7 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
         #------------------
 
         #------------------
-        # generate the temporal encoding of sentence sequences 
+        # generate the temporal encoding of sentence seque`nces 
         # using per-word positional encoding which is l_context_pe_in
         pe_A_encoding = PositionalEncodingLayer([l_context_in, l_context_pe_in], vocab, A)
         self.A = pe_A_encoding.W
