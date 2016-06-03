@@ -127,6 +127,27 @@ def get_vocab(filenames, reader):
         return vocab, word_to_idx, idx_to_word, max_sentlen
 
 
+def load_sentence_embeddings(filename):
+    embeddings = []
+    with open(filename, 'r') as f:
+        batch_size = pickle.load(f)
+        batch_num = 1
+        while True:
+            try:
+                print "Batch {0} processed".format(batch_num)
+                embed_output = pickle.load(f)
+                embeddings.append(embed_output)
+                batch_num += 1
+            except:
+                break
+
+    embeddings = np.vstack(tuple(embeddings))
+    n, h = embeddings.shape
+    embeddings = embeddings.reshape(2*n, h/2)
+
+    return embeddings
+
+
 def parse_SICK(filename, word_to_idx):
     """ 
     Parses the SICK dataset into consecutive premise-hypothesis
@@ -462,3 +483,9 @@ def HeKaimingInitializer():
 
 def GaussianDefaultInitializer():
     return lambda shape: np.random.randn(shape[0], shape[1]).astype(np.float32)
+
+
+
+if __name__ == "__main__":
+    embeddings = load_sentence_embeddings('../weights/lstm_layer_sentence_embeddings_dev')
+    print "Embeddings shape: ", embeddings.shape

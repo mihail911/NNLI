@@ -20,7 +20,7 @@ import time
 from sklearn import metrics
 from sklearn.preprocessing import LabelBinarizer
 from theano.printing import Print as pp
-from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK, snli_reader, parse_SNLI
+from util.utils import sick_reader, build_glove_embedding, get_vocab, parse_SICK, snli_reader, parse_SNLI, load_sentence_embeddings
 from util.stats import Stats
 
 from customlayers import *
@@ -40,7 +40,8 @@ class NLIModel:
     def __init__(self, train_file, test_file, batch_size, 
                 embedding_size=20, max_norm=100, lr=0.01, num_hops=3, 
                 adj_weight_tying=True, linear_start=False, 
-                exp_name='nlirun', dataset='sick', context_size=2, **kwargs):
+                exp_name='nlirun', dataset='sick', context_size=2,
+                use_sent_embed=False, **kwargs):
 
         self.exp_name = exp_name
         self.stats = Stats(exp_name)
@@ -57,7 +58,7 @@ class NLIModel:
             self.la = lasagne.updates.adagrad
     
 
-        snli_filenames = (self.root_dir + "/data/SNLI/snli_1.0rc3_train.txt",
+        snli_filenames = (self.root_dir + "/data/SNLI/snli_1.0rc3_dev.txt", #TODO: Fix
                      self.root_dir + "/data/SNLI/snli_1.0rc3_dev.txt")
         sick_filenames = (
                     self.root_dir + "/data/SICK/SICK_train_parsed.txt",
@@ -84,15 +85,26 @@ class NLIModel:
 
 
         print "after dataset parsing..."
-        lines = np.concatenate([train_lines, test_lines], axis=0)
+        #lines = np.concatenate([train_lines, test_lines], axis=0)
 
         self.data = {'train': {}, 'test': {}}
         S_train, self.data['train']['C'], self.data['train']['Q'], self.data['train']['Y'], max_seqlen = self.process_dataset(train_lines, word_to_idx, max_sentlen, train_labels, context_size)
+
         train_len = S_train.shape[0]
 
         S_test, self.data['test']['C'], self.data['test']['Q'], self.data['test']['Y'], _ = self.process_dataset(test_lines, word_to_idx, max_sentlen,        
-                                                                                                      test_labels, context_size, offset=train_len)
+                                                                        test_labels, context_size, offset=train_len)
+
+        # Load embeddings if necessary
+        if use_sent_embed:
+            S_train = load_sentence_embeddings(
+                    '../weights/lstm_layer_sentence_embeddings_dev') # TODO: Fix
+            S_test = load_sentence_embeddings(
+                '../weights/lstm_layer_sentence_embeddings_dev')
+
         S = np.concatenate([S_train, S_test], axis=0)
+
+        print "Shape S: ", S.shape
 
         lb = LabelBinarizer()
         lb.fit(train_labels + test_labels)
@@ -103,7 +115,7 @@ class NLIModel:
         print "-" * 80
         self.query_len = kwargs['query_len']
 
-
+        self.use_sent_embed = use_sent_embed
         self.max_sentlen = max_sentlen
         self.embedding_size = embedding_size
         self.context_size = context_size
@@ -120,8 +132,11 @@ class NLIModel:
         self.word_to_idx = word_to_idx
         self.nonlinearity = None if linear_start else lasagne.nonlinearities.softmax
 
+
         self.build_network()
         print "Network built"
+
+
 
     def reset_zero(self): 
         """
@@ -175,16 +190,11 @@ class NLIModel:
         epoch = 0
         n_train_batches = len(self.data['train']['Y']) // self.batch_size
         self.lr = self.init_lr
-        prev_train_f1, prev_test_f1 = None, None
+        prev_train_f1, prev_test_f1 = None, -1
 
 
         while (epoch < n_epochs):
             epoch += 1
-            # Get the weights from last iter
-            last_weights = lasagne.layers.helper.get_all_param_values(self.network)
-
-            # if epoch % 10 == 0:
-            #     self.lr /= 2.0
 
             indices = range(n_train_batches)
             if shuffle_batch:
@@ -203,11 +213,10 @@ class NLIModel:
 
             # Subsample train set for computation of accuracy -- pick 1000 random indices
             num_train = len(self.data['train']['Y'])
-            subsample_idx = random.sample(np.arange(num_train), 1000)
+            subsample_idx = random.sample(np.arange(num_train), 9800) # TODO: FIX
             subsample_dict = {}
             for key, value in self.data['train'].iteritems():
                 subsample_dict[key] = value[subsample_idx]
-
 
             ########
             print 'TRAIN', '=' * 40
@@ -241,8 +250,9 @@ class NLIModel:
                 # else:
                 #     pass
                 #     #prev_test_f1 = test_f1
-
-            self.save_model("pair_lstm_run1.wts")
+                if test_f1 > prev_test_f1:
+                    self.save_model("transfer_memnet_run1.wts")
+                    prev_test_f1 = test_f1
 
 
         self.stats.recordFinalStats(n_epochs, prev_train_f1, prev_test_f1)
@@ -340,21 +350,29 @@ class NLIModel:
 
     def output_sent_embeddings(self):
         self.load_model('pair_lstm_run1.wts')
-        n_train_batches = len(self.data['train']['Y']) // self.batch_size
+        #n_train_batches = len(self.data['train']['Y']) // self.batch_size
         store_dict = {}
         store_dict['batch_size'] = self.batch_size
 
-        with open('lstm_layer_sentence_embeddings', 'w') as f:
-            pickle.dump(store_dict['batch_size'], f)
+        fake_train = {}
+        fake_train['Q'] = self.data['test']['Q'][9800:]
+        fake_train['Y'] = self.data['test']['Y'][9800:]
+        print "Size batch: ", len(fake_train['Q'])
 
-            for minibatch_index in range(n_train_batches):
-                print "batch {0}".format(minibatch_index)
-                self.set_shared_variables(self.data['train'], minibatch_index)
-                lstm_layer_output = self.lstm_layer_output()
-                pickle.dump(lstm_layer_output, f)
+        n_train_batches = 1
+        with open('lstm_layer_sentence_embeddings_residual_dev', 'w') as f:
+            #pickle.dump(store_dict['batch_size'], f)
 
+            # for minibatch_index in range(n_train_batches):
+            #     print "batch {0}".format(minibatch_index)
+            #     self.set_shared_variables(self.data['train'], minibatch_index)
+            #     lstm_layer_output = self.lstm_layer_output()
+            #     pickle.dump(lstm_layer_output, f)
 
-            print "Stored layer embeddings"
+            self.set_shared_variables(fake_train, 0)
+            lstm_layer_output = self.lstm_layer_output()
+            print "Lstm layer output shape: ", lstm_layer_output.shape
+            pickle.dump(lstm_layer_output, f)
 
 
 class MemoryNLIModel(NLIModel):
@@ -450,3 +468,6 @@ class MemoryNLIModel(NLIModel):
         return (np.array(S, dtype=np.int32), 
                np.array(C), np.array(Q, dtype=np.int32), 
                np.array(labels), max_seqlen)
+
+
+

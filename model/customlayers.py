@@ -164,18 +164,61 @@ class SentenceEmbeddingLayer(lasagne.layers.MergeLayer):
            
            For example, this could be a pre-trained portion of a pair LSTM model.
 
-   A_sent: A shared sentence-embedding tensor size (|S|, embedding_size)
+   embed_sent: A shared sentence-embedding tensor size (|S|, embedding_size)
+
+   bitmap: A shared 1d tensor with 1s for those sentences that already have embeddings computed,
+           0 otherwise
+
 
     """
 
-    def __init__(self, incomings, A_sent, **kwargs):
-        super(SentenceEmbeddingLayer, self).__init__(incoming)
+    def __init__(self, incomings, embed_sent, bitmap, lstm_layer, embed_size, **kwargs):
+        super(SentenceEmbeddingLayer, self).__init__(incomings)
 
-        if len(incomings != 2):
-            raise NotImplementedError
-        pass
+        # self.embed_size = embed_size
+        # self.bitmap = bitmap
+        # self.lstm_layer = lstm_layer
+        # self.zeros = theano.shared(np.array(0))
+        # self.embed_sent = embed_sent
+        #
+        #
+        # flat_inputs = T.reshape(inputs, newshape=[-1])
+        # unseen_indices = T.extra_ops.compress(T.lt(self.bitmap[flat_inputs], 1),
+        #                     flat_inputs)
+        # # Run lstm function on unseen indices
+        # context_update = T.tile(unseen_indices, (self.embed_size, 1)) #self.lstm_layer(unseen_indices)
+        # # Dim context update -- (num_idx, embed_size)
+        #
+        # # Write into embed_sent-- define theano function to handle this
+        # self.embed_sent.set_subtensor[unseen_indices] = context_update
+        # # Update newly calculated entries in bitmap
+        # self.bitmap[unseen_indices].set_value(1)
 
 
+
+    def get_output_shape_for(self, input_shapes):
+        # Need the output shape to be (batch_size, 2*hidden_size)
+        return lasagne.layers.helper.get_output_shape(self.network)
+
+    def get_output_for(self, inputs, **kwargs):
+        """
+        inputs: (batch_size, context_size) represents the context indices for a given batch
+        """
+
+        # get unseen inputs: same as np.compress()
+        # shape (?)
+        flat_inputs = T.reshape(inputs, newshape=[-1])
+        unseen_indices = T.extra_ops.compress(T.lt(self.bitmap[flat_inputs], 1),
+                            flat_inputs)
+        # Run lstm function on unseen indices
+        context_update = T.tile(unseen_indices, (self.embed_size, 1)) #self.lstm_layer(unseen_indices)
+        # Dim context update -- (num_idx, embed_size)
+
+        # Write into embed_sent
+        self.embed_sent.set_subtensor[unseen_indices] = context_update
+        # Update newly calculated entries in bitmap
+        self.bitmap[unseen_indices].set_value(1)
+        return self.embed_sent[inputs]
 
 
 class MemoryNetworkLayer(lasagne.layers.MergeLayer):
@@ -271,4 +314,123 @@ class MemoryNetworkLayer(lasagne.layers.MergeLayer):
 
     def reset_zero(self):
         self.set_zero(self.zero_vec)
+
+
+
+class SentenceMemoryNetworkLayer(lasagne.layers.MergeLayer):
+    """
+     A single residual memory layer that uses sentence embeddings.
+
+    Inputs:
+    - incomings: The incoming layer
+    - S_len: the size of the A, C embedding lookups
+    - A, C: Sentence embedding matrices
+    - A_T, C_T: Temporal embedding matrices
+    - nonlinearity: a theano / lasagne function to use
+    as part of the attention mechanism.
+
+    """
+    def __init__(self, incomings, S_len, embedding_size,
+                 A, A_T, C, C_T,
+                 nonlinearity=lasagne.nonlinearities.softmax,
+                 **kwargs):
+
+        super(SentenceMemoryNetworkLayer, self).__init__(incomings)
+        if len(incomings) != 2:
+            raise NotImplementedError
+
+        batch_size, max_seqlen = self.input_shapes[0]
+        query_len = kwargs.get('query_len', 2)
+
+        assert(query_len)
+        print max_seqlen
+        print query_len
+        assert(max_seqlen % query_len == 0)
+        #------------------
+        # Inputs
+        l_context_in = lasagne.layers.InputLayer(shape=(batch_size, max_seqlen))
+        # This is expected to be an embedded query vector, called 'u' in the paper.
+        l_B_embedding = lasagne.layers.InputLayer(shape=(batch_size, query_len*embedding_size))
+        #------------------
+
+        #------------------
+        # generate the temporal encoding of sentence sequences
+        # using per-word positional encoding which is l_context_pe_in
+        A_embedding = lasagne.layers.EmbeddingLayer(l_context_in, S_len, embedding_size, W=A)
+        self.A = A_embedding.W
+
+        l_A_embedding = TemporalEncodingLayer(A_embedding, T=A_T)
+        self.A_T = l_A_embedding.T
+        l_A_embedding = lasagne.layers.ReshapeLayer(l_A_embedding, shape=(batch_size, int(max_seqlen / query_len), query_len * embedding_size))
+
+        C_embedding = lasagne.layers.EmbeddingLayer(l_context_in, S_len, embedding_size, W=C)
+        self.C = C_embedding.W
+
+        l_C_embedding = TemporalEncodingLayer(C_embedding, T=C_T)
+        self.C_T = l_C_embedding.T
+        l_C_embedding = lasagne.layers.ReshapeLayer(l_C_embedding, shape=(batch_size, int(max_seqlen / query_len), query_len * embedding_size))
+        #------------------
+
+        # Performs soft attention to get p_i = softmax (u^T * m_i)
+        l_prob = InnerProductLayer((l_A_embedding, l_B_embedding), nonlinearity=nonlinearity)
+
+        # gives weighted sum, o = sum (p_i * c_i) from paper
+        l_weighted_output = BatchedDotLayer((l_prob, l_C_embedding))
+
+        # skip-combination o + u from paper
+        l_sum = lasagne.layers.ElemwiseSumLayer((l_weighted_output, l_B_embedding))
+
+        self.l_context_in = l_context_in
+        self.l_B_embedding = l_B_embedding
+        self.network = l_sum
+
+        params = lasagne.layers.helper.get_all_params(self.network, trainable=True)
+        values = lasagne.layers.helper.get_all_param_values(self.network, trainable=True)
+        for p, v in zip(params, values):
+            self.add_param(p, v.shape, name=p.name)
+
+
+    def get_output_for(self, inputs, **kwargs):
+        return lasagne.layers.helper.get_output(self.network, {
+                    self.l_context_in: inputs[0],
+                    self.l_B_embedding: inputs[1]
+                })
+
+
+    def get_output_shape_for(self, input_shapes):
+        # Need the output shape to be (batch_size, 2*hidden_size)
+        return lasagne.layers.helper.get_output_shape(self.network)
+
+
+    def reset_zero(self):
+        pass
+
+
+
+if __name__ == "__main__":
+    batch_size = 1
+    embed_size = 5
+    sent_len = 20
+    seq_len = 2
+
+    bitmap = theano.shared(np.zeros(sent_len).astype(np.int32))
+
+    bit_mask = T.ivector('bit_mask')
+    lstm_layer_fn = theano.function([bit_mask], T.tile(bit_mask, (embed_size, 1)))
+
+    embed_sent = theano.shared(np.zeros((sent_len, embed_size)))
+
+
+    batch_idx = T.imatrix()
+    input = lasagne.layers.InputLayer(shape=(batch_size, seq_len), input_var=batch_idx)
+    sent_layer = SentenceEmbeddingLayer([input], embed_sent, bitmap, lstm_layer_fn,
+                                        embed_size)
+
+    output = lasagne.layers.get_output(sent_layer)
+
+
+    sent_output = theano.function(batch_idx, output)
+
+
+
 

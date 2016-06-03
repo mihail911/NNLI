@@ -11,6 +11,11 @@ from feedforward import FeedForwardModel
 from lstm import LSTMModel
 from memn2n import MemoryNetworkModel
 from pairlstm import PairLSTMModel
+from transfermemnet import TransferMemoryNetworkModel
+
+
+import theano
+print "Theano version: ", theano.__version__
 
 def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1')
@@ -20,7 +25,8 @@ _model_dict = {
 	'mn'   : lambda args: MemoryNetworkModel(**args.__dict__), 
 	'ff'   : lambda args: FeedForwardModel(**args.__dict__),
 	'lstm' : lambda args: LSTMModel(**args.__dict__),
-    'pairlstm' : lambda args: PairLSTMModel(**args.__dict__)
+    'pairlstm' : lambda args: PairLSTMModel(**args.__dict__),
+    'tmn': lambda args: TransferMemoryNetworkModel(**args.__dict__)
 			}
 
 def main():
@@ -29,7 +35,7 @@ def main():
     parser.add_argument('--train_file', type=str, default='', help='Train file')
     parser.add_argument('--test_file', type=str, default='', help='Test file')
     parser.add_argument('--batch_size', type=int, default=100, help='Batch size')
-    parser.add_argument('--embedding_size', type=int, default=50, help='Embedding size')
+    parser.add_argument('--embedding_size', type=int, default=100, help='Embedding size')
     parser.add_argument('--max_norm', type=float, default=40.0, help='Max norm')
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--opt_alg', type=str, default='adam', help="Learning algorithm")
@@ -41,21 +47,23 @@ def main():
     parser.add_argument('--l2_reg', type=float, default=0.01, help='l2 regularization')
     parser.add_argument('--query_len', type=int, default=2, help='max Length of network query' )
     parser.add_argument('--root_dir', type=str, default=_root_dir, help='root directory of project')
-    parser.add_argument('--model', type=str, default='pairlstm', help='Which model to use (mn, ff, lstm)')
+    parser.add_argument('--model', type=str, default='tmn', help='Which model to use (mn, ff, lstm)')
     parser.add_argument('--context_size', type=int, default=10, help='size of context window')
     parser.add_argument('--exp_name', type=str, default='snli_run', help='Logger file to use')
     parser.add_argument('--dataset', type=str, default='snli', help='which of sick or snli to use for experiment')
+    parser.add_argument('--use_sent_embed', type='bool', default=True, help='whether to use pretrained sentence embeddings')
     args = parser.parse_args()
     print '*' * 80
     print 'args:', args
     print '*' * 80
 
+
     model_type = args.__dict__['model']
     print "Model type: ", model_type
     model = _model_dict[model_type](args)
-    #model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
-    print "Outputting sentence embeddings"
-    model.output_sent_embeddings()
+    model.train(n_epochs=args.n_epochs, shuffle_batch=args.shuffle_batch)
+    #print "Outputting sentence embeddings"
+    #model.output_sent_embeddings()
 
 
 if __name__ == '__main__':
